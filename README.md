@@ -10,7 +10,7 @@ At each calendar month-end it uses Yahoo Finance adjusted close data (or a user 
 (1-month return + 3-month return + 6-month return + 12-month return) / 4
 ```
 
-Each return is `price at the signal date / price at the corresponding earlier month-end - 1`. This needs 12 prior observations for each asset involved in the decision. If SPY and TIP momentum are strictly positive, HAA-Simple selects SPY; otherwise it selects IEF if its momentum is higher than BIL's, or BIL otherwise. Valid risk-on signals do not wait for BIL history; IEF/BIL history is required only for a defensive selection. The selected asset earns the **next** month's return, so the month-end signal cannot affect the same period it observes.
+Each return is `price at the signal date / price at the corresponding earlier month-end - 1`. This needs 12 prior observations for each asset involved in the decision. If SPY and TIP momentum are strictly positive, HAA-Simple selects SPY; otherwise it selects the available defensive asset with the higher momentum. Before BIL has accumulated enough history, a defensive allocation uses IEF when its valid history is available; no proxy data is created. The selected asset earns the **next** month's return, so the month-end signal cannot affect the same period it observes.
 
 ## Install and run
 
