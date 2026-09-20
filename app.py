@@ -92,7 +92,10 @@ with backtest_tab:
     summary.loc["Average changes/year", "HAA-Simple pre-tax"] = changes / years if years else 0
     summary.loc["Annual turnover", "HAA-Simple pre-tax"] = changes / years if years else 0
     st.subheader("Results")
-    st.dataframe(summary.style.format("{:.2%}", subset=[x for x in summary.index if x not in {"Final value", "Allocation changes", "Average changes/year", "Annual turnover"}]).format("{:.2f}", subset=["Final value", "Allocation changes", "Average changes/year", "Annual turnover"]), use_container_width=True)
+    percentage_rows = [row for row in summary.index if row not in {"Final value", "Allocation changes", "Average changes/year", "Annual turnover"}]
+    numeric_rows = ["Final value", "Allocation changes", "Average changes/year", "Annual turnover"]
+    styled_summary = summary.style.format("{:.2%}", subset=pd.IndexSlice[percentage_rows, :]).format("{:.2f}", subset=pd.IndexSlice[numeric_rows, :])
+    st.dataframe(styled_summary, use_container_width=True)
     curves = result.monthly[["pre_tax_value", "benchmark_value"]].rename(columns={"pre_tax_value": "HAA-Simple pre-tax", "benchmark_value": "SPY buy-and-hold"})
     if tax_enabled:
         curves["HAA-Simple after-tax"] = result.monthly["after_tax_value"]
