@@ -4,13 +4,13 @@ A deliberately small, auditable Streamlit backtester for the canonical **HAA-Sim
 
 ## What it does
 
-At each calendar month-end it uses Yahoo Finance adjusted close data (or a user replacement CSV) for SPY, TIP, IEF, and BIL. It calculates:
+At each calendar month-end it uses Yahoo Finance adjusted close data (or a user replacement CSV) for SPY, TIP, IEF, and BIL. It calculates HAA's equal-weighted **13612U** composite:
 
 ```
-(12 × 1-month return + 4 × 3-month return + 2 × 6-month return + 1 × 12-month return) / 4
+(1-month return + 3-month return + 6-month return + 12-month return) / 4
 ```
 
-Each return is `price at the signal date / price at the corresponding earlier month-end - 1`. This needs 12 prior month-end observations. If SPY and TIP momentum are strictly positive, HAA-Simple selects SPY; otherwise it selects IEF if its momentum is higher than BIL's, or BIL otherwise. The selected asset earns the **next** month's return, so the month-end signal cannot affect the same period it observes.
+Each return is `price at the signal date / price at the corresponding earlier month-end - 1`. This needs 12 prior observations for each asset involved in the decision. If SPY and TIP momentum are strictly positive, HAA-Simple selects SPY; otherwise it selects IEF if its momentum is higher than BIL's, or BIL otherwise. Valid risk-on signals do not wait for BIL history; IEF/BIL history is required only for a defensive selection. The selected asset earns the **next** month's return, so the month-end signal cannot affect the same period it observes.
 
 ## Install and run
 
@@ -29,7 +29,7 @@ The app downloads Yahoo Finance history automatically. In the sidebar, enter the
 pytest
 ```
 
-Tests cover the decision branches, a manually calculated 13612W example, future-data isolation, next-period execution, unchanged-allocation trade handling, matching benchmark dates, and realized-only tax accounting.
+Tests cover the decision branches, a manually calculated 13612U example, future-data isolation, next-period execution, unchanged-allocation trade handling, matching benchmark dates, conditional early risk-on execution, and realized-only tax accounting.
 
 ## Tax treatment
 
