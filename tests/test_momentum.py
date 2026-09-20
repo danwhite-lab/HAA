@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 
+from haa.data import parse_ticker_map, upload_asset_from_filename
 from haa.momentum import momentum_13612w
 
 
@@ -21,3 +22,8 @@ def test_momentum_never_uses_future_prices():
 def pytest_approx(value):
     import pytest
     return pytest.approx(value)
+
+
+def test_yahoo_ticker_mapping_and_single_upload_file_names_are_explicit():
+    assert parse_ticker_map("SPY=VOO\nTIP=TIP\nIEF=IEF\nBIL=BIL")["SPY"] == "VOO"
+    assert upload_asset_from_filename("TIP_validation.csv") == "TIP"
