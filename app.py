@@ -9,7 +9,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 from haa.constants import ASSETS, DEFAULT_TAX_RATE
-from haa.data import combine_replacements, common_monthly_period, date_ranges, download_yahoo_prices, read_uploaded_csv, to_month_end
+from haa.data import DEFAULT_TICKER_MAP, combine_replacements, common_monthly_period, date_ranges, download_yahoo_prices, parse_ticker_map, read_uploaded_csv, to_month_end, upload_asset_from_filename
 from haa.engine import run_backtest
 from haa.metrics import annual_returns, performance_metrics
 from haa.strategies import HAASimple
@@ -18,31 +18,40 @@ st.set_page_config(page_title="HAA-Simple Backtest", layout="wide")
 st.title("HAA-Simple — transparent monthly backtest")
 st.caption("Canonical rules only. Decisions are made at month-end and executed for the following month; no optimization or synthetic history.")
 
-@st.cache_data(ttl=3600, show_spinner="Downloading Yahoo Finance price history...")
-def load_data():
-    return download_yahoo_prices()
-
-try:
-    downloaded = load_data()
-except Exception as exc:
-    st.error(f"Data download failed: {exc}")
-    st.stop()
-
 with st.sidebar:
     st.header("Controls")
-    uploads = {asset: st.file_uploader(f"Replace {asset} CSV", type="csv", key=asset) for asset in ASSETS}
+    ticker_text = st.text_area("Yahoo Finance ticker sources", value="\n".join(f"{role}={ticker}" for role, ticker in DEFAULT_TICKER_MAP.items()), help="One canonical role per line. Example: SPY=SPY. Changing a ticker replaces only that role's Yahoo data source; HAA-Simple rules remain fixed.")
+    uploads = st.file_uploader("Upload replacement CSV files", type="csv", accept_multiple_files=True, help="Upload one or more files. Name each file with its target canonical role, for example SPY.csv or TIP_validation.csv.")
     initial = st.number_input("Initial investment", min_value=1.0, value=100_000.0, step=1_000.0)
     cost_pct = st.number_input("Transaction cost per entry/change (%)", min_value=0.0, max_value=10.0, value=0.0, step=0.01) / 100
     tax_enabled = st.toggle("Israeli capital-gains tax", value=False)
     tax_rate = st.number_input("Tax rate (%)", min_value=0.0, max_value=100.0, value=DEFAULT_TAX_RATE * 100, step=0.1, disabled=not tax_enabled) / 100
 
+try:
+    ticker_map = parse_ticker_map(ticker_text)
+except ValueError as exc:
+    st.sidebar.error(str(exc))
+    st.stop()
+
+@st.cache_data(ttl=3600, show_spinner="Downloading Yahoo Finance price history...")
+def load_data(source_items: tuple[tuple[str, str], ...]):
+    return download_yahoo_prices(dict(source_items))
+
+try:
+    downloaded = load_data(tuple(ticker_map.items()))
+except Exception as exc:
+    st.error(f"Yahoo Finance download failed: {exc}")
+    st.stop()
+
 replacements = {}
-for asset, upload in uploads.items():
-    if upload is not None:
-        try:
-            replacements[asset] = read_uploaded_csv(upload.getvalue(), asset)
-        except ValueError as exc:
-            st.sidebar.error(str(exc))
+for upload in uploads or []:
+    try:
+        asset = upload_asset_from_filename(upload.name)
+        if asset in replacements:
+            raise ValueError(f"More than one upload targets {asset}; upload only one replacement file per canonical role.")
+        replacements[asset] = read_uploaded_csv(upload.getvalue(), asset)
+    except ValueError as exc:
+        st.sidebar.error(str(exc))
 prices = combine_replacements(downloaded, replacements)
 monthly = to_month_end(prices)
 ranges = date_ranges(prices)
@@ -51,7 +60,7 @@ common_start, common_end = common_monthly_period(monthly)
 st.subheader("Data coverage")
 st.dataframe(ranges, use_container_width=True)
 if common_start is None:
-    st.error("The four assets have no common month-end observations. Upload compatible CSV histories.")
+    st.error("The four assets have no common month-end observations. Check the Yahoo ticker mappings or upload compatible CSV histories.")
     st.stop()
 st.info(f"Actual common monthly data period: {common_start.date()} through {common_end.date()}.")
 with st.sidebar:
@@ -107,7 +116,7 @@ with validation_tab:
 
 **13612W:** `(12×1-month return + 4×3-month return + 2×6-month return + 1×12-month return) / 4`. Each return is `price at signal date / price at its historical month-end - 1`. This implementation therefore requires 12 earlier complete month-end observations and uses no later prices.
 
-**Data:** Yahoo Finance download, using `Adj Close` when Yahoo supplies it and `Close` only as a visible fallback. Uploaded CSV data replaces an asset’s entire history. No missing ETF history is fabricated.
+**Data:** Enter a `CANONICAL_ROLE=YAHOO_TICKER` mapping in the sidebar to download Yahoo Finance data automatically (the defaults are `SPY=SPY`, `TIP=TIP`, `IEF=IEF`, and `BIL=BIL`). Uploaded CSV data replaces an asset’s entire history; use one uploader and name files with their target role, e.g. `SPY.csv`. `Adj Close` is used when Yahoo supplies it; `Close` is the visible fallback. No missing ETF history is fabricated.
 
 **Tax:** applies only when an existing position is sold due to an allocation change. It tracks cost basis and loss carryforward, never taxes the final unrealized position, and is independent of the strategy module.""")
     st.write(f"First valid signal date: **{first_signal.date()}**")
