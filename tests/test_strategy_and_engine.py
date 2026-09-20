@@ -44,9 +44,13 @@ def test_no_allocation_change_when_asset_is_unchanged():
     assert result.monthly["allocation_change"].sum() == 0
 
 
-def test_risk_on_signal_does_not_wait_for_bil_history():
+def test_early_decisions_do_not_wait_for_bil_history():
     index = pd.date_range("2006-04-30", periods=14, freq="ME")
     prices = pd.DataFrame({"SPY": range(100, 114), "TIP": range(100, 114), "IEF": range(100, 114), "BIL": [float("nan")] * 13 + [100]}, index=index, dtype=float)
     decisions = HAASimple().decisions(prices)
     assert decisions.index.min() == index[12]
     assert decisions.iloc[0]["selected_asset"] == "SPY"
+
+    prices.loc[index[12], "SPY"] = 50
+    decisions = HAASimple().decisions(prices)
+    assert decisions.iloc[0]["selected_asset"] == "IEF"
