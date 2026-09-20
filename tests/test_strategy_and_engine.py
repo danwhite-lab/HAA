@@ -11,7 +11,7 @@ def make_prices():
 
 
 def make_decision(spy, tip, ief, bil, selected):
-    return pd.DataFrame([{"SPY_13612w": spy, "TIP_13612w": tip, "IEF_13612w": ief, "BIL_13612w": bil, "selected_asset": selected, "previous_asset": None, "trade": True}], index=pd.DatetimeIndex([pd.Timestamp("2021-01-31")], name="signal_date"))
+    return pd.DataFrame([{"SPY_13612u": spy, "TIP_13612u": tip, "IEF_13612u": ief, "BIL_13612u": bil, "selected_asset": selected, "previous_asset": None, "trade": True}], index=pd.DatetimeIndex([pd.Timestamp("2021-01-31")], name="signal_date"))
 
 
 @pytest.mark.parametrize(("spy", "tip", "ief", "bil", "expected"), [
@@ -42,3 +42,11 @@ def test_no_allocation_change_when_asset_is_unchanged():
     decisions = pd.DataFrame({"selected_asset": ["SPY", "SPY"]}, index=dates)
     result = run_backtest(decisions, prices, 100)
     assert result.monthly["allocation_change"].sum() == 0
+
+
+def test_risk_on_signal_does_not_wait_for_bil_history():
+    index = pd.date_range("2006-04-30", periods=14, freq="ME")
+    prices = pd.DataFrame({"SPY": range(100, 114), "TIP": range(100, 114), "IEF": range(100, 114), "BIL": [float("nan")] * 13 + [100]}, index=index, dtype=float)
+    decisions = HAASimple().decisions(prices)
+    assert decisions.index.min() == index[12]
+    assert decisions.iloc[0]["selected_asset"] == "SPY"
