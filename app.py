@@ -92,9 +92,10 @@ with backtest_tab:
     summary.loc["Average changes/year", "HAA-Simple pre-tax"] = changes / years if years else 0
     summary.loc["Annual turnover", "HAA-Simple pre-tax"] = changes / years if years else 0
     st.subheader("Results")
-    percentage_rows = [row for row in summary.index if row not in {"Final value", "Allocation changes", "Average changes/year", "Annual turnover"}]
-    numeric_rows = ["Final value", "Allocation changes", "Average changes/year", "Annual turnover"]
-    styled_summary = summary.style.format("{:.2%}", subset=pd.IndexSlice[percentage_rows, :]).format("{:.2f}", subset=pd.IndexSlice[numeric_rows, :])
+    percentage_rows = ["CAGR", "Total return", "Maximum drawdown", "Annualized volatility", "Best month", "Worst month", "Annual turnover"]
+    ratio_rows = ["Sharpe", "Sortino", "Calmar"]
+    numeric_rows = ["Final value", "Allocation changes", "Average changes/year"]
+    styled_summary = summary.style.format("{:.2%}", subset=pd.IndexSlice[percentage_rows, :]).format("{:.2f}", subset=pd.IndexSlice[ratio_rows + numeric_rows, :])
     st.dataframe(styled_summary, use_container_width=True)
     curves = result.monthly[["pre_tax_value", "benchmark_value"]].rename(columns={"pre_tax_value": "HAA-Simple pre-tax", "benchmark_value": "SPY buy-and-hold"})
     if tax_enabled:
@@ -115,9 +116,9 @@ with backtest_tab:
 
 with validation_tab:
     st.subheader("Rules and calculation")
-    st.markdown("""**HAA-Simple:** at each month-end calculate 13612W momentum for SPY and TIP. If both are strictly positive, select SPY. Otherwise select IEF when IEF momentum is greater than BIL momentum; select BIL on a tie or when BIL is greater. The selection earns the *following* month’s return only.
+    st.markdown("""**HAA-Simple:** at each month-end calculate equal-weighted 13612U momentum for SPY and TIP. If both are strictly positive, select SPY. Otherwise select IEF when IEF momentum is greater than BIL momentum; select BIL on a tie or when BIL is greater. The selection earns the *following* month’s return only. SPY/TIP history is sufficient for a risk-on decision; IEF/BIL are required only when defense is selected.
 
-**13612W:** `(12×1-month return + 4×3-month return + 2×6-month return + 1×12-month return) / 4`. Each return is `price at signal date / price at its historical month-end - 1`. This implementation therefore requires 12 earlier complete month-end observations and uses no later prices.
+**13612U:** `(1-month return + 3-month return + 6-month return + 12-month return) / 4`. Each return is `price at signal date / price at its historical month-end - 1`. This implementation therefore requires 12 earlier observations of each asset it actually needs and uses no later prices.
 
 **Data:** Enter a `CANONICAL_ROLE=YAHOO_TICKER` mapping in the sidebar to download Yahoo Finance data automatically (the defaults are `SPY=SPY`, `TIP=TIP`, `IEF=IEF`, and `BIL=BIL`). Uploaded CSV data replaces an asset’s entire history; use one uploader and name files with their target role, e.g. `SPY.csv`. `Adj Close` is used when Yahoo supplies it; `Close` is the visible fallback. No missing ETF history is fabricated.
 
@@ -126,11 +127,11 @@ with validation_tab:
     missing = monthly[monthly.isna().any(axis=1)]
     st.write(f"Months with at least one missing canonical price: **{len(missing)}**")
     st.subheader("Monthly audit table")
-    audit_columns = [f"{asset}_price" for asset in ASSETS] + [f"{asset}_13612w" for asset in ASSETS] + ["regime", "selected_asset", "previous_asset", "trade", "holding_end", "holding_period_return"]
+    audit_columns = [f"{asset}_price" for asset in ASSETS] + [f"{asset}_13612u" for asset in ASSETS] + ["regime", "selected_asset", "previous_asset", "trade", "holding_end", "holding_period_return"]
     audit = result.audit[audit_columns]
-    st.dataframe(audit.style.format("{:.6f}", subset=[c for c in audit.columns if c.endswith("13612w") or c.endswith("return")]), use_container_width=True)
+    st.dataframe(audit.style.format("{:.6f}", subset=[c for c in audit.columns if c.endswith("13612u") or c.endswith("return")]), use_container_width=True)
     st.download_button("Download audit CSV", audit.to_csv().encode("utf-8"), "haa_simple_monthly_audit.csv", "text/csv")
     st.subheader("Raw and monthly data used")
     st.dataframe(prices, use_container_width=True)
     st.dataframe(monthly, use_container_width=True)
-    st.caption("Automated validation: run `pytest` locally; tests cover strategy selection, timing, benchmark dates, tax realization, and a hand-calculated 13612W example.")
+    st.caption("Automated validation: run `pytest` locally; tests cover strategy selection, timing, benchmark dates, tax realization, conditional early risk-on execution, and a hand-calculated 13612U example.")
