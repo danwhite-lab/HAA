@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
+import re
 from typing import Mapping
 
 import pandas as pd
 
 from .constants import ASSETS
+
+DEFAULT_TICKER_MAP = {asset: asset for asset in ASSETS}
 
 
 def _normalise_frame(frame: pd.DataFrame, asset: str) -> pd.Series:
@@ -25,14 +29,52 @@ def _normalise_frame(frame: pd.DataFrame, asset: str) -> pd.Series:
     raise ValueError(f"{asset}: CSV/data must include 'Adj Close' or 'Close'.")
 
 
-def download_yahoo_prices(assets: tuple[str, ...] = ASSETS) -> pd.DataFrame:
-    """Download all canonical assets; Yahoo's adjusted close is preferred."""
+def parse_ticker_map(text: str) -> dict[str, str]:
+    """Parse canonical-role-to-Yahoo-ticker entries such as ``SPY=SPY``.
+
+    Roles stay fixed for HAA-Simple. The editable ticker is only a transparent
+    data-source replacement for that role, useful for validation.
+    """
+    mapping: dict[str, str] = {}
+    entries = [entry.strip() for entry in re.split(r"[,\n]+", text) if entry.strip()]
+    for entry in entries:
+        if "=" not in entry:
+            raise ValueError(f"Use ROLE=TICKER entries, for example SPY=SPY; received '{entry}'.")
+        role, ticker = (part.strip().upper() for part in entry.split("=", 1))
+        if role not in ASSETS:
+            raise ValueError(f"'{role}' is not a canonical HAA-Simple role. Use only: {', '.join(ASSETS)}.")
+        if not ticker:
+            raise ValueError(f"{role}: Yahoo ticker cannot be empty.")
+        if role in mapping:
+            raise ValueError(f"{role} appears more than once.")
+        mapping[role] = ticker
+    missing = set(ASSETS) - set(mapping)
+    if missing:
+        raise ValueError(f"Missing Yahoo ticker mapping for: {', '.join(sorted(missing))}.")
+    return mapping
+
+
+def upload_asset_from_filename(filename: str) -> str:
+    """Resolve the canonical target role from a CSV filename, e.g. ``SPY.csv``."""
+    tokens = set(filter(None, re.split(r"[^A-Z0-9]+", Path(filename).stem.upper())))
+    matches = tokens.intersection(ASSETS)
+    if len(matches) != 1:
+        raise ValueError(f"{filename}: name the file with exactly one canonical role (SPY, TIP, IEF, or BIL), e.g. SPY.csv.")
+    return matches.pop()
+
+
+def download_yahoo_prices(ticker_map: Mapping[str, str] | None = None) -> pd.DataFrame:
+    """Download each canonical role from its selected Yahoo ticker source."""
     import yfinance as yf
 
-    raw = yf.download(list(assets), period="max", auto_adjust=False, progress=False)
+    sources = dict(ticker_map or DEFAULT_TICKER_MAP)
+    missing = set(ASSETS) - set(sources)
+    if missing:
+        raise ValueError(f"Missing Yahoo ticker mapping for: {', '.join(sorted(missing))}.")
+    raw = yf.download(list(sources.values()), period="max", auto_adjust=False, progress=False)
     if raw.empty:
         raise RuntimeError("Yahoo Finance returned no data. Try again or upload CSV files.")
-    result = pd.DataFrame({asset: _normalise_frame(raw, asset) for asset in assets})
+    result = pd.DataFrame({asset: _normalise_frame(raw, ticker) for asset, ticker in sources.items()})
     return _clean_prices(result)
 
 
