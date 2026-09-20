@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 
 from ..constants import ASSETS, STRATEGY_NAME
-from ..momentum import momentum_13612w
+from ..momentum import momentum_13612u
 
 
 class HAASimple:
@@ -18,21 +18,33 @@ class HAASimple:
         return "risk-off", "IEF" if ief_momentum > bil_momentum else "BIL"
 
     def decisions(self, monthly_prices: pd.DataFrame) -> pd.DataFrame:
-        """Make month-end decisions, leaving execution to the next holding period."""
+        """Make month-end decisions, leaving execution to the next holding period.
+
+        SPY and TIP are sufficient for a risk-on decision. IEF/BIL history is
+        required only when the strategy is actually in defensive mode. This
+        avoids discarding valid early SPY holdings merely because BIL started
+        trading later, without creating or proxying any missing ETF history.
+        """
         missing = set(ASSETS) - set(monthly_prices.columns)
         if missing:
             raise ValueError(f"Missing canonical assets: {sorted(missing)}")
-        prices = monthly_prices.loc[:, ASSETS].dropna(how="any")
-        momenta = prices.apply(momentum_13612w)
-        valid = momenta.dropna(how="any")
+        prices = monthly_prices.loc[:, ASSETS].copy()
+        momenta = prices.apply(momentum_13612u)
         rows: list[dict] = []
         previous: str | None = None
-        for date, values in valid.iterrows():
-            regime, selected = self.select_asset(values["SPY"], values["TIP"], values["IEF"], values["BIL"])
+        for date, values in momenta.iterrows():
+            if pd.isna(values["SPY"]) or pd.isna(values["TIP"]):
+                continue
+            if values["SPY"] > 0 and values["TIP"] > 0:
+                regime, selected = "risk-on", "SPY"
+            else:
+                if pd.isna(values["IEF"]) or pd.isna(values["BIL"]):
+                    continue
+                regime, selected = self.select_asset(values["SPY"], values["TIP"], values["IEF"], values["BIL"])
             rows.append({
                 "signal_date": date,
                 **{f"{asset}_price": prices.loc[date, asset] for asset in ASSETS},
-                **{f"{asset}_13612w": values[asset] for asset in ASSETS},
+                **{f"{asset}_13612u": values[asset] for asset in ASSETS},
                 "regime": regime,
                 "selected_asset": selected,
                 "previous_asset": previous,
