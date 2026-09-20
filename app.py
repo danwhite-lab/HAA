@@ -116,7 +116,7 @@ with backtest_tab:
 
 with validation_tab:
     st.subheader("Rules and calculation")
-    st.markdown("""**HAA-Simple:** at each month-end calculate equal-weighted 13612U momentum for SPY and TIP. If both are strictly positive, select SPY. Otherwise select IEF when IEF momentum is greater than BIL momentum; select BIL on a tie or when BIL is greater. The selection earns the *following* month’s return only. SPY/TIP history is sufficient for a risk-on decision; IEF/BIL are required only when defense is selected.
+    st.markdown("""**HAA-Simple:** at each month-end calculate equal-weighted 13612U momentum for SPY and TIP. If both are strictly positive, select SPY. Otherwise select the available defensive asset with the higher momentum: IEF or BIL. The selection earns the *following* month’s return only. SPY/TIP history is sufficient for a risk-on decision; early defensive months use IEF when BIL has not yet accumulated sufficient history—no BIL proxy is created.
 
 **13612U:** `(1-month return + 3-month return + 6-month return + 12-month return) / 4`. Each return is `price at signal date / price at its historical month-end - 1`. This implementation therefore requires 12 earlier observations of each asset it actually needs and uses no later prices.
 
