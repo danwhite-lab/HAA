@@ -299,9 +299,9 @@ if page == "Signals":
     signal_monthly = to_month_end(signal_prices)
     signal_decisions = signal_strategy.decisions(signal_monthly)
     signal_status = latest_actionable_signal(signal_decisions, signal_monthly, signal_data_assets)
-    st.caption("Uses completed month-end data only. Backtest settings in the sidebar do not affect this signal.")
     if signal_status.decision is None:
         st.title("Signal")
+        st.caption(f"Model: {signal_model_name} · Completed month-end signal")
         st.error(signal_status.reason)
     else:
         signal = signal_status.decision
@@ -316,7 +316,7 @@ if page == "Signals":
             action = "Hold" if not bool(signal["trade"]) else (f"Buy {signal['selected_asset']}" if previous == "No prior allocation" else f"Switch {previous} → {signal['selected_asset']}")
             target_allocation = f"100% {signal['selected_asset']}"
         st.title(f"Signal - {target_allocation}")
-        st.caption(f"Model: {signal_model_name}")
+        st.caption(f"Model: {signal_model_name} · Completed month-end signal")
         signal_summary = pd.DataFrame([{
             "signal date": signal_date.date().isoformat(),
             "regime": str(signal["regime"]).replace("-", " ").title(),
@@ -365,6 +365,7 @@ if page == "Signals":
         st.dataframe(history.sort_index(ascending=False), use_container_width=True)
         st.download_button("Download signal history CSV", history.to_csv().encode("utf-8"), f"{signal_strategy.name.lower().replace(' ', '_').replace('(', '').replace(')', '')}_signal_history.csv", "text/csv")
     with st.expander("Data status"):
+        st.caption("This signal uses completed month-end data only. Backtest settings do not affect it.")
         raw_ranges = date_ranges(signal_prices)
         st.dataframe(raw_ranges[["last_available"]], use_container_width=True)
         st.caption(f"Latest eligible completed month: {signal_status.completed_through.date()}. A partial current month is never presented as a final signal.")
