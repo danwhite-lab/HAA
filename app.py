@@ -209,7 +209,7 @@ with signals_tab:
 with validation_tab:
     st.subheader("Rules and calculation")
     if isinstance(strategy, HAAClassicNoQQQ):
-        st.markdown("""**HAA Classic (No QQQ):** TIP is the only canary. When TIP's equal-weighted 13612U momentum is strictly positive, hold the top four assets by 13612U from SPY, IWM, PDBC, TLT, VEA, VNQ, and VWO at 25% each. QQQ is intentionally excluded. When TIP is zero or negative, hold 100% of the higher-momentum defensive asset, IEF or BIL. No leverage is included.""")
+        st.markdown("""**HAA Classic (No QQQ):** TIP is the only canary. When TIP's equal-weighted 13612U momentum is strictly positive, hold the top four assets by 13612U from IEF, SPY, IWM, PDBC, TLT, VEA, VNQ, and VWO at 25% each. IEF is eligible in both risk-on and defensive allocations; BIL is defensive-only. QQQ is intentionally excluded. When TIP is zero or negative, hold 100% of the higher-momentum defensive asset, IEF or BIL. No leverage is included.""")
     elif isinstance(strategy, HAASimpleLeveraged2x):
         st.markdown("""**HAA-Simple Leveraged 2x (SSO):** calculate equal-weighted 13612U using unleveraged SPY and TIP. If both are strictly positive, hold 100% SSO. Otherwise select the available defensive asset with the higher 13612U momentum: IEF or BIL. SSO momentum never controls the gate; using SPY avoids de-risking the leveraged sleeve solely because of SSO's amplified drawdown. IEF/BIL remain unleveraged.
 
