@@ -4,13 +4,17 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 import re
-from typing import Mapping
+from typing import Iterable, Mapping
 
 import pandas as pd
 
 from .constants import ASSETS
 
 DEFAULT_TICKER_MAP = {asset: asset for asset in ASSETS}
+
+
+def default_ticker_map(assets: Iterable[str]) -> dict[str, str]:
+    return {asset: asset for asset in assets}
 
 
 def _normalise_frame(frame: pd.DataFrame, asset: str) -> pd.Series:
@@ -29,37 +33,39 @@ def _normalise_frame(frame: pd.DataFrame, asset: str) -> pd.Series:
     raise ValueError(f"{asset}: CSV/data must include 'Adj Close' or 'Close'.")
 
 
-def parse_ticker_map(text: str) -> dict[str, str]:
+def parse_ticker_map(text: str, required_assets: Iterable[str] = ASSETS) -> dict[str, str]:
     """Parse canonical-role-to-Yahoo-ticker entries such as ``SPY=SPY``.
 
     Roles stay fixed for HAA-Simple. The editable ticker is only a transparent
     data-source replacement for that role, useful for validation.
     """
+    required = tuple(required_assets)
     mapping: dict[str, str] = {}
     entries = [entry.strip() for entry in re.split(r"[,\n]+", text) if entry.strip()]
     for entry in entries:
         if "=" not in entry:
             raise ValueError(f"Use ROLE=TICKER entries, for example SPY=SPY; received '{entry}'.")
         role, ticker = (part.strip().upper() for part in entry.split("=", 1))
-        if role not in ASSETS:
-            raise ValueError(f"'{role}' is not a canonical HAA-Simple role. Use only: {', '.join(ASSETS)}.")
+        if role not in required:
+            raise ValueError(f"'{role}' is not valid for this model. Use only: {', '.join(required)}.")
         if not ticker:
             raise ValueError(f"{role}: Yahoo ticker cannot be empty.")
         if role in mapping:
             raise ValueError(f"{role} appears more than once.")
         mapping[role] = ticker
-    missing = set(ASSETS) - set(mapping)
+    missing = set(required) - set(mapping)
     if missing:
         raise ValueError(f"Missing Yahoo ticker mapping for: {', '.join(sorted(missing))}.")
     return mapping
 
 
-def upload_asset_from_filename(filename: str) -> str:
+def upload_asset_from_filename(filename: str, allowed_assets: Iterable[str] = ASSETS) -> str:
     """Resolve the canonical target role from a CSV filename, e.g. ``SPY.csv``."""
     tokens = set(filter(None, re.split(r"[^A-Z0-9]+", Path(filename).stem.upper())))
-    matches = tokens.intersection(ASSETS)
+    allowed = tuple(allowed_assets)
+    matches = tokens.intersection(allowed)
     if len(matches) != 1:
-        raise ValueError(f"{filename}: name the file with exactly one canonical role (SPY, TIP, IEF, or BIL), e.g. SPY.csv.")
+        raise ValueError(f"{filename}: name the file with exactly one valid asset ({', '.join(allowed)}), e.g. SPY.csv.")
     return matches.pop()
 
 
@@ -90,12 +96,12 @@ def read_uploaded_csv(content: bytes, asset: str) -> pd.Series:
     return _clean_prices(series.to_frame())[asset]
 
 
-def combine_replacements(downloaded: pd.DataFrame, replacements: Mapping[str, pd.Series]) -> pd.DataFrame:
+def combine_replacements(downloaded: pd.DataFrame, replacements: Mapping[str, pd.Series], assets: Iterable[str] = ASSETS) -> pd.DataFrame:
     """Replace whole asset histories supplied for validation; never fill invented data."""
     combined = downloaded.copy()
     for asset, series in replacements.items():
         combined = combined.drop(columns=asset, errors="ignore").join(series.rename(asset), how="outer")
-    return _clean_prices(combined.reindex(columns=ASSETS))
+    return _clean_prices(combined.reindex(columns=tuple(assets)))
 
 
 def _clean_prices(prices: pd.DataFrame) -> pd.DataFrame:
