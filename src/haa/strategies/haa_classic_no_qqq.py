@@ -8,7 +8,7 @@ from ..momentum import momentum_13612u
 
 
 class HAAClassicNoQQQ:
-    """HAA's TIP gate with the top four of seven offensive assets, equal weighted."""
+    """HAA's TIP gate with the top four of eight assets, equal weighted."""
 
     name = "HAA Classic (No QQQ)"
     data_assets = CLASSIC_DATA_ASSETS
