@@ -31,6 +31,12 @@ def test_nonpositive_tip_selects_best_defensive_asset():
     assert decision["target_weights"] == {"BIL": 1.0}
 
 
+def test_ief_is_eligible_in_the_risk_on_top_four():
+    prices = prices_with_terminal_scores({"TIP": .1, "IEF": .8, "SPY": .7, "IWM": .6, "PDBC": .5, "TLT": .4})
+    decision = HAAClassicNoQQQ().decisions(prices).iloc[-1]
+    assert decision["target_weights"] == {"IEF": .25, "SPY": .25, "IWM": .25, "PDBC": .25}
+
+
 def test_offensive_ties_use_alphabetical_ticker_order():
     prices = prices_with_terminal_scores({"TIP": .1, "SPY": .2, "IWM": .2, "PDBC": .2, "TLT": .2, "VEA": .2, "VNQ": .2, "VWO": .2})
     decision = HAAClassicNoQQQ().decisions(prices).iloc[-1]
