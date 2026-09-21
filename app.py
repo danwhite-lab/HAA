@@ -114,9 +114,12 @@ with backtest_tab:
     st.caption(f"Holding periods: {result.monthly.index.min().date()} through {result.monthly.index.max().date()}. SPY benchmark uses these same monthly periods.")
     pre_tax_label = f"{strategy.name} pre-tax"
     after_tax_label = f"{strategy.name} after-tax"
-    comparison = {pre_tax_label: performance_metrics(result.monthly["pre_tax_value"], initial), "SPY buy-and-hold": performance_metrics(result.monthly["benchmark_value"], initial)}
+    comparison = {pre_tax_label: performance_metrics(result.monthly["pre_tax_value"], initial)}
     if tax_enabled:
         comparison[after_tax_label] = performance_metrics(result.monthly["after_tax_value"], initial)
+    # Keep the benchmark at the far right; the after-tax strategy result sits
+    # beside its pre-tax counterpart for direct capital-gains comparison.
+    comparison["SPY buy-and-hold"] = performance_metrics(result.monthly["benchmark_value"], initial)
     summary = pd.DataFrame(comparison)
     changes = int(result.monthly["allocation_change"].sum())
     years = len(result.monthly) / 12
@@ -130,21 +133,24 @@ with backtest_tab:
     numeric_rows = ["Final value", "Allocation changes", "Average changes/year"]
     styled_summary = summary.style.format("{:.2%}", subset=pd.IndexSlice[percentage_rows, :]).format("{:.2f}", subset=pd.IndexSlice[ratio_rows + numeric_rows, :])
     st.dataframe(styled_summary, use_container_width=True)
-    curves = result.monthly[["pre_tax_value", "benchmark_value"]].rename(columns={"pre_tax_value": pre_tax_label, "benchmark_value": "SPY buy-and-hold"})
+    curves = pd.DataFrame({pre_tax_label: result.monthly["pre_tax_value"]})
     if tax_enabled:
         curves[after_tax_label] = result.monthly["after_tax_value"]
+    curves["SPY buy-and-hold"] = result.monthly["benchmark_value"]
     st.plotly_chart(px.line(curves, title="Equity curve"), use_container_width=True)
     drawdowns = curves.div(curves.cummax()).sub(1)
     st.plotly_chart(px.line(drawdowns, title="Drawdown"), use_container_width=True)
     st.subheader("Annual returns")
-    annual = pd.concat({pre_tax_label: annual_returns(result.monthly["pre_tax_monthly_return"]), "SPY buy-and-hold": annual_returns(result.monthly["benchmark_monthly_return"])}, axis=1)
+    annual = pd.DataFrame({pre_tax_label: annual_returns(result.monthly["pre_tax_monthly_return"])})
     if tax_enabled:
         annual[after_tax_label] = annual_returns(result.monthly["after_tax_monthly_return"])
+    annual["SPY buy-and-hold"] = annual_returns(result.monthly["benchmark_monthly_return"])
     st.dataframe(annual.style.format("{:.2%}"), use_container_width=True)
     st.subheader("Monthly returns")
-    monthly_returns = pd.DataFrame({pre_tax_label: result.monthly["pre_tax_monthly_return"], "SPY buy-and-hold": result.monthly["benchmark_monthly_return"]})
+    monthly_returns = pd.DataFrame({pre_tax_label: result.monthly["pre_tax_monthly_return"]})
     if tax_enabled:
         monthly_returns[after_tax_label] = result.monthly["after_tax_monthly_return"]
+    monthly_returns["SPY buy-and-hold"] = result.monthly["benchmark_monthly_return"]
     st.dataframe(monthly_returns.style.format("{:.2%}"), use_container_width=True)
 
 with compare_tab:
