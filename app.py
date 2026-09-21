@@ -12,15 +12,30 @@ from haa.constants import ASSETS, DEFAULT_TAX_RATE
 from haa.data import combine_replacements, common_monthly_period, date_ranges, default_ticker_map, download_yahoo_prices, parse_ticker_map, read_uploaded_csv, to_month_end, upload_asset_from_filename
 from haa.engine import run_backtest
 from haa.metrics import annual_returns, performance_metrics
+from haa.signals import first_trading_day_after, latest_actionable_signal
 from haa.strategies import HAASimple, HAASimpleLeveraged2x
 
 MODEL_OPTIONS = {"HAA-Simple": HAASimple, "HAA-Simple Leveraged 2x (SSO)": HAASimpleLeveraged2x}
 
 st.set_page_config(page_title="HAA Backtest", layout="wide")
 
+
+def sync_model_from_sidebar() -> None:
+    st.session_state["signals_model_name"] = st.session_state["model_name"]
+
+
+def sync_model_from_signals() -> None:
+    st.session_state["model_name"] = st.session_state["signals_model_name"]
+
+
+if "model_name" not in st.session_state:
+    st.session_state["model_name"] = next(iter(MODEL_OPTIONS))
+if "signals_model_name" not in st.session_state:
+    st.session_state["signals_model_name"] = st.session_state["model_name"]
+
 with st.sidebar:
     st.header("Controls")
-    model_name = st.selectbox("HAA model", tuple(MODEL_OPTIONS))
+    model_name = st.selectbox("HAA model", tuple(MODEL_OPTIONS), key="model_name", on_change=sync_model_from_sidebar)
     strategy = MODEL_OPTIONS[model_name]()
     data_assets = getattr(strategy, "data_assets", ASSETS)
     ticker_text = st.text_area("Yahoo Finance ticker sources", value="\n".join(f"{role}={ticker}" for role, ticker in default_ticker_map(data_assets).items()), help="One asset role per line. Example: SPY=SPY. The leveraged model also downloads SSO, but uses SPY—not SSO—for risk-on signals.")
@@ -81,7 +96,7 @@ except ValueError as exc:
     st.error(str(exc))
     st.stop()
 
-backtest_tab, validation_tab = st.tabs(["Backtest", "Validation"])
+backtest_tab, signals_tab, validation_tab = st.tabs(["Backtest", "Signals", "Validation"])
 with backtest_tab:
     st.title(f"{strategy.name} — transparent monthly backtest")
     st.caption("Signals are evaluated at month-end and execute for the following holding period; no optimization or synthetic history.")
@@ -121,6 +136,56 @@ with backtest_tab:
     if tax_enabled:
         monthly_returns[after_tax_label] = result.monthly["after_tax_monthly_return"]
     st.dataframe(monthly_returns.style.format("{:.2%}"), use_container_width=True)
+
+with signals_tab:
+    st.title(f"{strategy.name} — current monthly signal")
+    st.selectbox("Model", tuple(MODEL_OPTIONS), key="signals_model_name", on_change=sync_model_from_signals, help="Changing the model refreshes the data and all tabs using that model.")
+    st.caption("This view uses the same completed-month decisions as the backtest. It does not calculate a separate live strategy.")
+    signal_status = latest_actionable_signal(decisions, monthly, data_assets)
+    raw_ranges = date_ranges(prices)
+    st.subheader("Data status")
+    st.dataframe(raw_ranges[["last_available"]], use_container_width=True)
+    st.caption(f"Latest eligible completed month: {signal_status.completed_through.date()}. A partial current month is never presented as a final signal.")
+    if signal_status.decision is None:
+        st.error(signal_status.reason)
+    else:
+        signal = signal_status.decision
+        signal_date = pd.Timestamp(signal.name)
+        effective_start = first_trading_day_after(prices, signal_date)
+        previous = signal["previous_asset"] if pd.notna(signal["previous_asset"]) else "No prior allocation"
+        action = "Hold" if not bool(signal["trade"]) else (f"Buy {signal['selected_asset']}" if previous == "No prior allocation" else f"Switch {previous} → {signal['selected_asset']}")
+        st.success(f"**Target allocation: 100% {signal['selected_asset']}**")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Signal date", signal_date.date().isoformat())
+        col2.metric("Regime", str(signal["regime"]).replace("-", " ").title())
+        col3.metric("Instruction", action)
+        col4.metric("Previous allocation", previous)
+        if effective_start is not None:
+            st.info(f"Effective holding period: **{effective_start.date()}** until the next month-end decision, subject to your own execution timing.")
+        else:
+            st.warning("No later trading observation is available yet, so an effective start date cannot be shown.")
+        st.subheader("Why this allocation")
+        if signal["regime"] == "risk-on":
+            holding = "SSO" if isinstance(strategy, HAASimpleLeveraged2x) else "SPY"
+            st.write(f"SPY and TIP 13612U momentum are both strictly positive, so the model selects {holding}.")
+        else:
+            st.write(f"At least one of SPY or TIP 13612U momentum is not positive, so the model selects the higher-momentum defensive asset: {signal['selected_asset']}.")
+        price_columns = [f"{asset}_price" for asset in data_assets]
+        momentum_columns = [f"{asset}_13612u" for asset in ASSETS]
+        inputs = pd.DataFrame({
+            "month-end price": {asset: signal[f"{asset}_price"] for asset in data_assets},
+            "13612U momentum": {asset: signal[f"{asset}_13612u"] for asset in ASSETS},
+        }).T
+        st.dataframe(inputs.style.format("{:.6f}"), use_container_width=True)
+        st.caption("13612U = (1-month return + 3-month return + 6-month return + 12-month return) / 4. The leveraged model uses SPY and TIP—not SSO momentum—to determine its gate.")
+    st.subheader("Signal history")
+    history_columns = ["regime", "selected_asset", "previous_asset", "trade"]
+    history = decisions.loc[:, history_columns].copy()
+    history["effective_start"] = [first_trading_day_after(prices, date) for date in history.index]
+    history = history.rename_axis("signal_date")
+    st.dataframe(history.sort_index(ascending=False), use_container_width=True)
+    st.download_button("Download signal history CSV", history.to_csv().encode("utf-8"), f"{strategy.name.lower().replace(' ', '_').replace('(', '').replace(')', '')}_signal_history.csv", "text/csv")
+    st.caption("Rules-based informational signal only; not investment advice. You are responsible for any trading decision and execution.")
 
 with validation_tab:
     st.subheader("Rules and calculation")
