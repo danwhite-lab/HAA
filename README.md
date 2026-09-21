@@ -7,6 +7,7 @@ A deliberately small, auditable Streamlit backtester for defined HAA variants. I
 - **HAA-Simple:** uses SPY and TIP 13612U signals; holds SPY only when both are positive, otherwise the stronger of IEF/BIL.
 - **HAA-Simple Leveraged 2x (SSO):** uses the *same unleveraged SPY and TIP signals* but holds SSO in risk-on periods. It always de-risks to unleveraged IEF/BIL. SSO momentum never controls the gate. This is a high-drawdown satellite, not a core holding.
 - **HAA Classic (No QQQ):** TIP is the sole canary. When TIP 13612U is positive, it holds the top four assets at 25% each from IEF, SPY, IWM, PDBC, TLT, VEA, VNQ, and VWO. IEF is eligible in both the risk-on ranking and the IEF/BIL defensive choice; BIL is defensive-only. QQQ and leverage are intentionally excluded.
+- **HAA Classic Leveraged 2x (No QQQ):** calculates the same TIP gate and top-four ranking on the 1× Classic no-QQQ universe, then holds 2× substitutes: IEF→UST, SPY→SSO, IWM→UWM, TLT→UBT, VEA→EFO, VNQ→URE, and VWO→EET. PDBC and BIL remain unleveraged. Risk-off compares 1× IEF/BIL momentum and holds UST or BIL. This is a high-drawdown satellite, not a core holding.
 
 ## What it does
 
