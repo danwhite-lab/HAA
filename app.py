@@ -311,7 +311,6 @@ if page == "Signals":
         }).T
         st.dataframe(inputs.style.format("{:.6f}"), use_container_width=True)
         st.caption("13612U = (1-month return + 3-month return + 6-month return + 12-month return) / 4. The leveraged model uses SPY and TIP—not SSO momentum—to determine its gate.")
-    st.subheader("Signal history")
     history_columns = ["regime", "selected_asset", "previous_asset", "trade"]
     if "target_weights" in signal_decisions:
         history_columns.insert(2, "target_weights")
