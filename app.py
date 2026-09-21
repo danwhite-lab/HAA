@@ -29,6 +29,16 @@ st.set_page_config(page_title="HAA Backtest", layout="wide")
 
 DEFAULT_TICKERS = "\n".join(f"{role}={ticker}" for role, ticker in default_ticker_map(ALL_MODEL_ASSETS).items())
 DEFAULT_MODEL = "HAA-Simple"
+
+
+def append_missing_default_tickers(text: str) -> str:
+    """Retain custom sources while migrating saved sessions to new model assets."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    roles = {line.split("=", 1)[0].strip().upper() for line in lines if "=" in line}
+    lines.extend(f"{asset}={asset}" for asset in ALL_MODEL_ASSETS if asset not in roles)
+    return "\n".join(lines)
+
+
 for key, value in {
     "model_name": DEFAULT_MODEL,
     "signals_model_name": DEFAULT_MODEL,
@@ -40,6 +50,7 @@ for key, value in {
     "uploaded_replacements": {},
 }.items():
     st.session_state.setdefault(key, value)
+st.session_state["ticker_text"] = append_missing_default_tickers(st.session_state["ticker_text"])
 
 # Native Streamlit sidebars are global to st.tabs. This page selector makes the
 # configuration sidebar genuinely Backtest-only while retaining tab-like navigation.
