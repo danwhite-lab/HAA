@@ -13,9 +13,13 @@ from haa.data import combine_replacements, common_monthly_period, date_ranges, d
 from haa.engine import run_backtest
 from haa.metrics import annual_returns, performance_metrics
 from haa.signals import first_trading_day_after, latest_actionable_signal
-from haa.strategies import HAASimple, HAASimpleLeveraged2x
+from haa.strategies import HAAClassicNoQQQ, HAASimple, HAASimpleLeveraged2x
 
-MODEL_OPTIONS = {"HAA-Simple": HAASimple, "HAA-Simple Leveraged 2x (SSO)": HAASimpleLeveraged2x}
+MODEL_OPTIONS = {
+    "HAA-Simple": HAASimple,
+    "HAA-Simple Leveraged 2x (SSO)": HAASimpleLeveraged2x,
+    "HAA Classic (No QQQ)": HAAClassicNoQQQ,
+}
 
 st.set_page_config(page_title="HAA Backtest", layout="wide")
 
@@ -111,9 +115,10 @@ with backtest_tab:
     summary = pd.DataFrame(comparison)
     changes = int(result.monthly["allocation_change"].sum())
     years = len(result.monthly) / 12
+    annual_turnover = result.monthly["turnover"].sum() / years if "turnover" in result.monthly and years else changes / years if years else 0
     summary.loc["Allocation changes", pre_tax_label] = changes
     summary.loc["Average changes/year", pre_tax_label] = changes / years if years else 0
-    summary.loc["Annual turnover", pre_tax_label] = changes / years if years else 0
+    summary.loc["Annual turnover", pre_tax_label] = annual_turnover
     st.subheader("Results")
     percentage_rows = ["CAGR", "Total return", "Maximum drawdown", "Annualized volatility", "Best month", "Worst month", "Annual turnover"]
     ratio_rows = ["Sharpe", "Sortino", "Calmar"]
@@ -153,8 +158,14 @@ with signals_tab:
         signal_date = pd.Timestamp(signal.name)
         effective_start = first_trading_day_after(prices, signal_date)
         previous = signal["previous_asset"] if pd.notna(signal["previous_asset"]) else "No prior allocation"
-        action = "Hold" if not bool(signal["trade"]) else (f"Buy {signal['selected_asset']}" if previous == "No prior allocation" else f"Switch {previous} → {signal['selected_asset']}")
-        st.success(f"**Target allocation: 100% {signal['selected_asset']}**")
+        weights = signal.get("target_weights", {signal["selected_asset"]: 1.0})
+        if getattr(strategy, "is_multi_asset", False):
+            action = "Hold allocation" if not bool(signal["trade"]) else ("Establish allocation" if previous == "No prior allocation" else "Rebalance allocation")
+            st.success("**Target allocation: multi-asset basket**")
+            st.dataframe(pd.DataFrame.from_dict(weights, orient="index", columns=["target weight"]).style.format("{:.2%}"), use_container_width=True)
+        else:
+            action = "Hold" if not bool(signal["trade"]) else (f"Buy {signal['selected_asset']}" if previous == "No prior allocation" else f"Switch {previous} → {signal['selected_asset']}")
+            st.success(f"**Target allocation: 100% {signal['selected_asset']}**")
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Signal date", signal_date.date().isoformat())
         col2.metric("Regime", str(signal["regime"]).replace("-", " ").title())
@@ -165,22 +176,30 @@ with signals_tab:
         else:
             st.warning("No later trading observation is available yet, so an effective start date cannot be shown.")
         st.subheader("Why this allocation")
-        if signal["regime"] == "risk-on":
+        if isinstance(strategy, HAAClassicNoQQQ) and signal["regime"] == "risk-on":
+            st.write(f"TIP 13612U momentum is strictly positive, so the model selects the four highest-momentum offensive assets: {signal['selected_assets']}.")
+        elif isinstance(strategy, HAAClassicNoQQQ):
+            st.write(f"TIP 13612U momentum is not positive, so the model selects the higher-momentum defensive asset: {signal['selected_asset']}.")
+        elif signal["regime"] == "risk-on":
             holding = "SSO" if isinstance(strategy, HAASimpleLeveraged2x) else "SPY"
             st.write(f"SPY and TIP 13612U momentum are both strictly positive, so the model selects {holding}.")
         else:
             st.write(f"At least one of SPY or TIP 13612U momentum is not positive, so the model selects the higher-momentum defensive asset: {signal['selected_asset']}.")
-        price_columns = [f"{asset}_price" for asset in data_assets]
-        momentum_columns = [f"{asset}_13612u" for asset in ASSETS]
+        price_columns = [f"{asset}_price" for asset in data_assets if f"{asset}_price" in signal.index]
+        momentum_columns = [f"{asset}_13612u" for asset in data_assets if f"{asset}_13612u" in signal.index]
         inputs = pd.DataFrame({
-            "month-end price": {asset: signal[f"{asset}_price"] for asset in data_assets},
-            "13612U momentum": {asset: signal[f"{asset}_13612u"] for asset in ASSETS},
+            "month-end price": {column.removesuffix("_price"): signal[column] for column in price_columns},
+            "13612U momentum": {column.removesuffix("_13612u"): signal[column] for column in momentum_columns},
         }).T
         st.dataframe(inputs.style.format("{:.6f}"), use_container_width=True)
         st.caption("13612U = (1-month return + 3-month return + 6-month return + 12-month return) / 4. The leveraged model uses SPY and TIP—not SSO momentum—to determine its gate.")
     st.subheader("Signal history")
     history_columns = ["regime", "selected_asset", "previous_asset", "trade"]
+    if "target_weights" in decisions:
+        history_columns.insert(2, "target_weights")
     history = decisions.loc[:, history_columns].copy()
+    if "target_weights" in history:
+        history["target_weights"] = history["target_weights"].map(lambda weights: ", ".join(f"{asset} {weight:.0%}" for asset, weight in weights.items()))
     history["effective_start"] = [first_trading_day_after(prices, date) for date in history.index]
     history = history.rename_axis("signal_date")
     st.dataframe(history.sort_index(ascending=False), use_container_width=True)
@@ -189,7 +208,9 @@ with signals_tab:
 
 with validation_tab:
     st.subheader("Rules and calculation")
-    if isinstance(strategy, HAASimpleLeveraged2x):
+    if isinstance(strategy, HAAClassicNoQQQ):
+        st.markdown("""**HAA Classic (No QQQ):** TIP is the only canary. When TIP's equal-weighted 13612U momentum is strictly positive, hold the top four assets by 13612U from SPY, IWM, PDBC, TLT, VEA, VNQ, and VWO at 25% each. QQQ is intentionally excluded. When TIP is zero or negative, hold 100% of the higher-momentum defensive asset, IEF or BIL. No leverage is included.""")
+    elif isinstance(strategy, HAASimpleLeveraged2x):
         st.markdown("""**HAA-Simple Leveraged 2x (SSO):** calculate equal-weighted 13612U using unleveraged SPY and TIP. If both are strictly positive, hold 100% SSO. Otherwise select the available defensive asset with the higher 13612U momentum: IEF or BIL. SSO momentum never controls the gate; using SPY avoids de-risking the leveraged sleeve solely because of SSO's amplified drawdown. IEF/BIL remain unleveraged.
 
 **Risk:** high-drawdown satellite, not a core holding. A monthly signal cannot prevent losses from a fast intramonth crash.""")
@@ -205,7 +226,10 @@ with validation_tab:
     missing = monthly[monthly.isna().any(axis=1)]
     st.write(f"Months with at least one missing canonical price: **{len(missing)}**")
     st.subheader("Monthly audit table")
-    audit_columns = [f"{asset}_price" for asset in data_assets] + [f"{asset}_13612u" for asset in ASSETS] + ["regime", "selected_asset", "previous_asset", "trade", "holding_end", "holding_period_return"]
+    audit_columns = [f"{asset}_price" for asset in data_assets] + [f"{asset}_13612u" for asset in data_assets]
+    if isinstance(strategy, HAAClassicNoQQQ):
+        audit_columns += [f"{asset}_rank" for asset in strategy.offensive_assets] + ["selected_assets", "target_weights", "previous_weights"]
+    audit_columns += ["regime", "selected_asset", "previous_asset", "trade", "holding_end", "holding_period_return"]
     audit = result.audit[audit_columns]
     st.dataframe(audit.style.format("{:.6f}", subset=[c for c in audit.columns if c.endswith("13612u") or c.endswith("return")]), use_container_width=True)
     st.download_button("Download audit CSV", audit.to_csv().encode("utf-8"), f"{strategy.name.lower().replace(' ', '_').replace('(', '').replace(')', '')}_monthly_audit.csv", "text/csv")
