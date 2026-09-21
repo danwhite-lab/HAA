@@ -62,7 +62,9 @@ if page == "Backtest":
         cost_pct = st.number_input("Transaction cost per entry/change (%)", min_value=0.0, max_value=10.0, value=cost_pct * 100, step=0.01) / 100
         tax_enabled = st.toggle("Israeli capital-gains tax", value=tax_enabled)
         tax_rate = st.number_input("Tax rate (%)", min_value=0.0, max_value=100.0, value=tax_rate * 100, step=0.1, disabled=not tax_enabled) / 100
-    st.session_state.update({"model_name": model_name, "ticker_text": ticker_text, "initial": initial, "cost_pct": cost_pct, "tax_enabled": tax_enabled, "tax_rate": tax_rate})
+    # The model selectbox already owns ``model_name`` in session state. Writing
+    # it again after instantiation raises StreamlitWidgetAlreadyInstantiatedError.
+    st.session_state.update({"ticker_text": ticker_text, "initial": initial, "cost_pct": cost_pct, "tax_enabled": tax_enabled, "tax_rate": tax_rate})
 
 strategy = MODEL_OPTIONS[model_name]()
 data_assets = getattr(strategy, "data_assets", ASSETS)
