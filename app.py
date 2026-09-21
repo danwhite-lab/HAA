@@ -52,6 +52,7 @@ def append_missing_default_tickers(text: str) -> str:
 for key, value in {
     "model_name": DEFAULT_MODEL,
     "signals_model_name": DEFAULT_MODEL,
+    "page": "Signals",
     "ticker_text": DEFAULT_TICKERS,
     "initial": 100_000.0,
     "cost_pct": 0.0,
@@ -62,9 +63,14 @@ for key, value in {
     st.session_state.setdefault(key, value)
 st.session_state["ticker_text"] = append_missing_default_tickers(st.session_state["ticker_text"])
 
-# Native Streamlit sidebars are global to st.tabs. This page selector makes the
-# configuration sidebar genuinely Backtest-only while retaining tab-like navigation.
-page = st.radio("Navigation", ("Signals", "Backtest", "Compare Models", "Validation"), horizontal=True, label_visibility="collapsed")
+# Keep the primary signal uncluttered. The compact menu holds navigation and,
+# on Signals, the model chooser; the sidebar remains Backtest-only.
+_, menu_column = st.columns([12, 1])
+with menu_column:
+    with st.popover("⋮", help="Navigation and signal model"):
+        page = st.radio("View", ("Signals", "Backtest", "Compare Models", "Validation"), key="page")
+        if page == "Signals":
+            st.selectbox("Signal model", tuple(MODEL_OPTIONS), key="signals_model_name", help="This selector controls the Signals page only; it does not change the Backtest configuration.")
 
 model_name = st.session_state["model_name"]
 ticker_text = st.session_state["ticker_text"]
@@ -285,7 +291,7 @@ if page == "Compare Models":
                 st.download_button(f"Download {name} common-period audit CSV", backtest.audit.to_csv().encode("utf-8"), f"{name.lower().replace(' ', '_').replace('(', '').replace(')', '')}_comparison_audit.csv", "text/csv", key=f"comparison_audit_{name}")
 
 if page == "Signals":
-    signal_model_name = st.selectbox("Model", tuple(MODEL_OPTIONS), key="signals_model_name", help="This selector controls the Signals page only; it does not change the Backtest configuration.")
+    signal_model_name = st.session_state["signals_model_name"]
     signal_strategy = MODEL_OPTIONS[signal_model_name]()
     signal_data_assets = getattr(signal_strategy, "data_assets", ASSETS)
     signal_momentum_assets = getattr(signal_strategy, "signal_assets", signal_data_assets)
@@ -310,6 +316,7 @@ if page == "Signals":
             action = "Hold" if not bool(signal["trade"]) else (f"Buy {signal['selected_asset']}" if previous == "No prior allocation" else f"Switch {previous} → {signal['selected_asset']}")
             target_allocation = f"100% {signal['selected_asset']}"
         st.title(f"Signal - {target_allocation}")
+        st.caption(f"Model: {signal_model_name}")
         signal_summary = pd.DataFrame([{
             "signal date": signal_date.date().isoformat(),
             "regime": str(signal["regime"]).replace("-", " ").title(),
