@@ -1,11 +1,12 @@
 # HAA-Simple
 
-A deliberately small, auditable Streamlit backtester for canonical **HAA-Simple** rules and its explicitly defined 2x SSO variant. It implements no optimization, parameter sweeps, synthetic data, or additional HAA variants.
+A deliberately small, auditable Streamlit backtester for defined HAA variants. It implements no optimization, parameter sweeps, or synthetic data.
 
 ## Available models
 
 - **HAA-Simple:** uses SPY and TIP 13612U signals; holds SPY only when both are positive, otherwise the stronger of IEF/BIL.
 - **HAA-Simple Leveraged 2x (SSO):** uses the *same unleveraged SPY and TIP signals* but holds SSO in risk-on periods. It always de-risks to unleveraged IEF/BIL. SSO momentum never controls the gate. This is a high-drawdown satellite, not a core holding.
+- **HAA Classic (No QQQ):** TIP is the sole canary. When TIP 13612U is positive, it holds the top four assets at 25% each from SPY, IWM, PDBC, TLT, VEA, VNQ, and VWO. When TIP is non-positive, it holds the stronger of IEF/BIL. QQQ and leverage are intentionally excluded.
 
 ## What it does
 
@@ -26,7 +27,7 @@ pip install -e '.[dev]'
 streamlit run app.py
 ```
 
-The app downloads Yahoo Finance history automatically. In the sidebar, enter the source ticker for each canonical role as `ROLE=TICKER` (for example, `SPY=SPY` or `SPY=VOO` for a validation replacement). The leveraged model also requests `SSO=SSO`. The strategy's roles and rules remain fixed. For independent validation, use the single multi-file upload control and name each CSV with its target role, for example `SPY.csv`, `SSO.csv`, or `TIP_validation.csv`. A CSV needs `Date` and `Adj Close` (preferred) or `Close`; the upload replaces that asset's full history rather than silently filling gaps.
+The app downloads Yahoo Finance history automatically. In the sidebar, enter the source ticker for each model asset as `ROLE=TICKER` (for example, `SPY=SPY` or `SPY=VOO` for a validation replacement). The leveraged model also requests `SSO=SSO`; Classic requests IWM, PDBC, TLT, VEA, VNQ, and VWO. The strategy's roles and rules remain fixed. For independent validation, use the single multi-file upload control and name each CSV with its target role, for example `SPY.csv`, `SSO.csv`, or `TIP_validation.csv`. A CSV needs `Date` and `Adj Close` (preferred) or `Close`; the upload replaces that asset's full history rather than silently filling gaps.
 
 ## Test
 
@@ -34,7 +35,7 @@ The app downloads Yahoo Finance history automatically. In the sidebar, enter the
 pytest
 ```
 
-Tests cover the decision branches, a manually calculated 13612U example, future-data isolation, next-period execution, unchanged-allocation trade handling, matching benchmark dates, conditional early risk-on execution, and realized-only tax accounting.
+Tests cover the decision branches, a manually calculated 13612U example, future-data isolation, next-period execution, unchanged-allocation trade handling, matching benchmark dates, Classic HAA top-four selection and tie-breaking, weighted portfolio execution, and realized-only tax accounting including partial sales.
 
 ## Tax treatment
 
@@ -46,4 +47,4 @@ This is a standard Streamlit project. Create an app at [Streamlit Community Clou
 
 ## Independent checks built into the UI
 
-The Validation tab shows data coverage, common backtest period, first valid signal, the raw and month-end price data, and a downloadable audit row per decision. The audit shows prices, all four momenta, regime, asset decision, prior asset, trade flag, and the following holding-period return.
+The Validation tab shows data coverage, common backtest period, first valid signal, raw and month-end price data, and a downloadable audit row per decision. Classic HAA audit rows additionally show all asset scores, offensive ranks, selected basket, current/previous target weights, trade flag, and the following holding-period return. For weighted portfolios, annual turnover is the one-way fraction of portfolio value purchased at each rebalance, annualized.
