@@ -23,6 +23,16 @@ MODEL_OPTIONS = {
     "HAA Classic (No QQQ)": HAAClassicNoQQQ,
     "HAA Classic Leveraged 2x (No QQQ)": HAAClassicLeveragedNoQQQ,
 }
+MODEL_RULES = {
+    "HAA-Simple": """**HAA-Simple:** At each month-end, calculate equal-weighted 13612U momentum for SPY and TIP. If both are strictly positive, hold 100% SPY. Otherwise, compare IEF and BIL 13612U momentum and hold 100% of the higher-momentum asset. The decision earns the following month's return only.""",
+    "HAA-Simple Leveraged 2x (SSO)": """**HAA-Simple Leveraged 2x (SSO):** Calculate equal-weighted 13612U using unleveraged SPY and TIP. If both are strictly positive, hold 100% SSO. Otherwise, compare IEF and BIL momentum and hold the higher-momentum defensive asset. SSO momentum never controls the gate; IEF and BIL remain unleveraged.
+
+**Risk:** high-drawdown satellite, not a core holding. A monthly signal cannot prevent losses from a fast intramonth crash.""",
+    "HAA Classic (No QQQ)": """**HAA Classic (No QQQ):** TIP is the sole canary. If TIP's equal-weighted 13612U momentum is strictly positive, rank IEF, SPY, IWM, PDBC, TLT, VEA, VNQ, and VWO by 13612U and hold the top four at 25% each. If TIP is zero or negative, compare IEF and BIL momentum and hold the higher-momentum asset. QQQ is intentionally excluded; no leverage is used.""",
+    "HAA Classic Leveraged 2x (No QQQ)": """**HAA Classic Leveraged 2x (No QQQ):** TIP is the sole canary and all momentum scores use unleveraged ETFs. If TIP's equal-weighted 13612U momentum is strictly positive, rank IEF, SPY, IWM, PDBC, TLT, VEA, VNQ, and VWO, select the top four, and allocate 25% to each mapped holding: IEF→UST, SPY→SSO, IWM→UWM, PDBC→PDBC, TLT→UBT, VEA→EFO, VNQ→URE, and VWO→EET. If TIP is zero or negative, compare 1× IEF and BIL momentum; hold UST if IEF wins or BIL otherwise. QQQ is excluded.
+
+**Risk:** high-drawdown leveraged satellite, not a core holding. A monthly signal cannot prevent losses from a fast intramonth crash.""",
+}
 ALL_MODEL_ASSETS = tuple(dict.fromkeys(asset for model_class in MODEL_OPTIONS.values() for asset in getattr(model_class, "data_assets", ASSETS)))
 
 st.set_page_config(page_title="HAA Backtest", layout="wide")
@@ -354,19 +364,10 @@ if page == "Signals":
     st.caption("Rules-based informational signal only; not investment advice. You are responsible for any trading decision and execution.")
 
 if page == "Validation":
-    st.subheader("Rules and calculation")
-    if isinstance(strategy, HAAClassicLeveragedNoQQQ):
-        st.markdown("""**HAA Classic Leveraged 2x (No QQQ):** TIP is the sole canary and all momentum scores use unleveraged ETFs. When TIP's equal-weighted 13612U momentum is strictly positive, rank IEF, SPY, IWM, PDBC, TLT, VEA, VNQ, and VWO by 13612U, select the top four, and allocate 25% to each mapped holding: IEF→UST, SPY→SSO, IWM→UWM, PDBC→PDBC, TLT→UBT, VEA→EFO, VNQ→URE, VWO→EET. When TIP is zero or negative, compare 1x IEF and BIL momentum; hold UST if IEF wins or BIL otherwise. QQQ is excluded.
-
-**Risk:** high-drawdown leveraged satellite, not a core holding. A monthly signal cannot prevent losses from a fast intramonth crash.""")
-    elif isinstance(strategy, HAAClassicNoQQQ):
-        st.markdown("""**HAA Classic (No QQQ):** TIP is the only canary. When TIP's equal-weighted 13612U momentum is strictly positive, hold the top four assets by 13612U from IEF, SPY, IWM, PDBC, TLT, VEA, VNQ, and VWO at 25% each. IEF is eligible in both risk-on and defensive allocations; BIL is defensive-only. QQQ is intentionally excluded. When TIP is zero or negative, hold 100% of the higher-momentum defensive asset, IEF or BIL. No leverage is included.""")
-    elif isinstance(strategy, HAASimpleLeveraged2x):
-        st.markdown("""**HAA-Simple Leveraged 2x (SSO):** calculate equal-weighted 13612U using unleveraged SPY and TIP. If both are strictly positive, hold 100% SSO. Otherwise select the available defensive asset with the higher 13612U momentum: IEF or BIL. SSO momentum never controls the gate; using SPY avoids de-risking the leveraged sleeve solely because of SSO's amplified drawdown. IEF/BIL remain unleveraged.
-
-**Risk:** high-drawdown satellite, not a core holding. A monthly signal cannot prevent losses from a fast intramonth crash.""")
-    else:
-        st.markdown("""**HAA-Simple:** at each month-end calculate equal-weighted 13612U momentum for SPY and TIP. If both are strictly positive, select SPY. Otherwise select the available defensive asset with the higher momentum: IEF or BIL. The selection earns the *following* month’s return only. SPY/TIP history is sufficient for a risk-on decision; early defensive months use IEF when BIL has not yet accumulated sufficient history—no BIL proxy is created.""")
+    st.subheader("Model rules")
+    for rule_name, rule in MODEL_RULES.items():
+        with st.expander(rule_name, expanded=rule_name == model_name):
+            st.markdown(rule)
 
     st.markdown("""**13612U:** `(1-month return + 3-month return + 6-month return + 12-month return) / 4`. Each return is `price at signal date / price at its historical month-end - 1`. This implementation therefore requires 12 earlier observations of each asset it actually needs and uses no later prices.
 
@@ -385,8 +386,9 @@ if page == "Validation":
             audit_columns += ["selected_underlying_assets", "mapped_holding_assets"]
     audit_columns += ["regime", "selected_asset", "previous_asset", "trade", "holding_end", "holding_period_return"]
     audit = result.audit[audit_columns]
-    st.dataframe(audit.style.format("{:.6f}", subset=[c for c in audit.columns if c.endswith("13612u") or c.endswith("return")]), use_container_width=True)
-    st.download_button("Download audit CSV", audit.to_csv().encode("utf-8"), f"{strategy.name.lower().replace(' ', '_').replace('(', '').replace(')', '')}_monthly_audit.csv", "text/csv")
+    with st.expander("Monthly audit table"):
+        st.dataframe(audit.style.format("{:.6f}", subset=[c for c in audit.columns if c.endswith("13612u") or c.endswith("return")]), use_container_width=True)
+        st.download_button("Download audit CSV", audit.to_csv().encode("utf-8"), f"{strategy.name.lower().replace(' ', '_').replace('(', '').replace(')', '')}_monthly_audit.csv", "text/csv")
     st.subheader("Raw and monthly data used")
     st.dataframe(prices, use_container_width=True)
     st.dataframe(monthly, use_container_width=True)
