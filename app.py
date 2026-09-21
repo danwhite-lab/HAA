@@ -259,7 +259,6 @@ if page == "Compare Models":
                 st.download_button(f"Download {name} common-period audit CSV", backtest.audit.to_csv().encode("utf-8"), f"{name.lower().replace(' ', '_').replace('(', '').replace(')', '')}_comparison_audit.csv", "text/csv", key=f"comparison_audit_{name}")
 
 if page == "Signals":
-    st.title("Current monthly signal")
     signal_model_name = st.selectbox("Model", tuple(MODEL_OPTIONS), key="signals_model_name", help="This selector controls the Signals page only; it does not change the Backtest configuration.")
     signal_strategy = MODEL_OPTIONS[signal_model_name]()
     signal_assets = getattr(signal_strategy, "data_assets", ASSETS)
@@ -269,6 +268,7 @@ if page == "Signals":
     signal_status = latest_actionable_signal(signal_decisions, signal_monthly, signal_assets)
     st.caption("Uses completed month-end data only. Backtest settings in the sidebar do not affect this signal.")
     if signal_status.decision is None:
+        st.title("Signal")
         st.error(signal_status.reason)
     else:
         signal = signal_status.decision
@@ -282,6 +282,7 @@ if page == "Signals":
         else:
             action = "Hold" if not bool(signal["trade"]) else (f"Buy {signal['selected_asset']}" if previous == "No prior allocation" else f"Switch {previous} → {signal['selected_asset']}")
             target_allocation = f"100% {signal['selected_asset']}"
+        st.title(f"Signal - {target_allocation}")
         signal_summary = pd.DataFrame([{
             "signal date": signal_date.date().isoformat(),
             "regime": str(signal["regime"]).replace("-", " ").title(),
