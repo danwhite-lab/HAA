@@ -1,6 +1,11 @@
 # HAA-Simple
 
-A deliberately small, auditable Streamlit backtester for the canonical **HAA-Simple** Hybrid Asset Allocation rules. It implements no leverage, optimization, parameter sweeps, synthetic data, or non-Simple HAA variants.
+A deliberately small, auditable Streamlit backtester for canonical **HAA-Simple** rules and its explicitly defined 2x SSO variant. It implements no optimization, parameter sweeps, synthetic data, or additional HAA variants.
+
+## Available models
+
+- **HAA-Simple:** uses SPY and TIP 13612U signals; holds SPY only when both are positive, otherwise the stronger of IEF/BIL.
+- **HAA-Simple Leveraged 2x (SSO):** uses the *same unleveraged SPY and TIP signals* but holds SSO in risk-on periods. It always de-risks to unleveraged IEF/BIL. SSO momentum never controls the gate. This is a high-drawdown satellite, not a core holding.
 
 ## What it does
 
@@ -21,7 +26,7 @@ pip install -e '.[dev]'
 streamlit run app.py
 ```
 
-The app downloads Yahoo Finance history automatically. In the sidebar, enter the source ticker for each canonical role as `ROLE=TICKER` (for example, `SPY=SPY` or `SPY=VOO` for a validation replacement). The strategy's roles and rules remain fixed. For independent validation, use the single multi-file upload control and name each CSV with its target role, for example `SPY.csv` or `TIP_validation.csv`. A CSV needs `Date` and `Adj Close` (preferred) or `Close`; the upload replaces that asset's full history rather than silently filling gaps.
+The app downloads Yahoo Finance history automatically. In the sidebar, enter the source ticker for each canonical role as `ROLE=TICKER` (for example, `SPY=SPY` or `SPY=VOO` for a validation replacement). The leveraged model also requests `SSO=SSO`. The strategy's roles and rules remain fixed. For independent validation, use the single multi-file upload control and name each CSV with its target role, for example `SPY.csv`, `SSO.csv`, or `TIP_validation.csv`. A CSV needs `Date` and `Adj Close` (preferred) or `Close`; the upload replaces that asset's full history rather than silently filling gaps.
 
 ## Test
 
