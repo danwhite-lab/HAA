@@ -282,14 +282,15 @@ if page == "Signals":
         else:
             action = "Hold" if not bool(signal["trade"]) else (f"Buy {signal['selected_asset']}" if previous == "No prior allocation" else f"Switch {previous} → {signal['selected_asset']}")
             target_allocation = f"100% {signal['selected_asset']}"
-        st.dataframe(pd.DataFrame([{
+        signal_summary = pd.DataFrame([{
             "signal date": signal_date.date().isoformat(),
             "regime": str(signal["regime"]).replace("-", " ").title(),
             "instruction": action,
             "target allocation": target_allocation,
-        }]), use_container_width=True, hide_index=True)
+        }])
+        st.dataframe(signal_summary.style.set_properties(**{"background-color": "#fff3cd"}), use_container_width=True, hide_index=True)
         if effective_start is not None:
-            st.info(f"Effective holding period: **{effective_start.date()}** until the next month-end decision, subject to your own execution timing.")
+            st.info(f"Effective holding period: **{effective_start.date()}** until the next month-end decision.")
         else:
             st.warning("No later trading observation is available yet, so an effective start date cannot be shown.")
         st.subheader("Why this allocation")
