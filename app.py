@@ -15,12 +15,13 @@ from haa.data import combine_replacements, common_monthly_period, date_ranges, d
 from haa.engine import run_backtest
 from haa.metrics import annual_returns, performance_metrics
 from haa.signals import first_trading_day_after, latest_actionable_signal
-from haa.strategies import HAAClassicNoQQQ, HAASimple, HAASimpleLeveraged2x
+from haa.strategies import HAAClassicLeveragedNoQQQ, HAAClassicNoQQQ, HAASimple, HAASimpleLeveraged2x
 
 MODEL_OPTIONS = {
     "HAA-Simple": HAASimple,
     "HAA-Simple Leveraged 2x (SSO)": HAASimpleLeveraged2x,
     "HAA Classic (No QQQ)": HAAClassicNoQQQ,
+    "HAA Classic Leveraged 2x (No QQQ)": HAAClassicLeveragedNoQQQ,
 }
 ALL_MODEL_ASSETS = tuple(dict.fromkeys(asset for model_class in MODEL_OPTIONS.values() for asset in getattr(model_class, "data_assets", ASSETS)))
 
@@ -265,11 +266,12 @@ if page == "Compare Models":
 if page == "Signals":
     signal_model_name = st.selectbox("Model", tuple(MODEL_OPTIONS), key="signals_model_name", help="This selector controls the Signals page only; it does not change the Backtest configuration.")
     signal_strategy = MODEL_OPTIONS[signal_model_name]()
-    signal_assets = getattr(signal_strategy, "data_assets", ASSETS)
-    signal_prices = all_prices.loc[:, signal_assets]
+    signal_data_assets = getattr(signal_strategy, "data_assets", ASSETS)
+    signal_momentum_assets = getattr(signal_strategy, "signal_assets", signal_data_assets)
+    signal_prices = all_prices.loc[:, signal_data_assets]
     signal_monthly = to_month_end(signal_prices)
     signal_decisions = signal_strategy.decisions(signal_monthly)
-    signal_status = latest_actionable_signal(signal_decisions, signal_monthly, signal_assets)
+    signal_status = latest_actionable_signal(signal_decisions, signal_monthly, signal_data_assets)
     st.caption("Uses completed month-end data only. Backtest settings in the sidebar do not affect this signal.")
     if signal_status.decision is None:
         st.title("Signal")
@@ -299,17 +301,23 @@ if page == "Signals":
         else:
             st.warning("No later trading observation is available yet, so an effective start date cannot be shown.")
         st.subheader("Why this allocation")
-        if isinstance(signal_strategy, HAAClassicNoQQQ) and signal["regime"] == "risk-on":
-            st.write(f"TIP 13612U momentum is strictly positive, so the model selects the four highest-momentum offensive assets: {signal['selected_assets']}.")
-        elif isinstance(strategy, HAAClassicNoQQQ):
-            st.write(f"TIP 13612U momentum is not positive, so the model selects the higher-momentum defensive asset: {signal['selected_asset']}.")
+        if isinstance(signal_strategy, (HAAClassicNoQQQ, HAAClassicLeveragedNoQQQ)) and signal["regime"] == "risk-on":
+            if isinstance(signal_strategy, HAAClassicLeveragedNoQQQ):
+                st.write(f"TIP 13612U momentum is strictly positive, so the model selects the four highest-momentum 1x underlyings ({signal['selected_underlying_assets']}) and holds their mapped 2x ETFs ({signal['mapped_holding_assets']}).")
+            else:
+                st.write(f"TIP 13612U momentum is strictly positive, so the model selects the four highest-momentum offensive assets: {signal['selected_assets']}.")
+        elif isinstance(signal_strategy, (HAAClassicNoQQQ, HAAClassicLeveragedNoQQQ)):
+            if isinstance(signal_strategy, HAAClassicLeveragedNoQQQ):
+                st.write(f"TIP 13612U momentum is not positive, so the model compares 1x IEF and BIL momentum and holds the mapped defensive asset: {signal['selected_asset']}.")
+            else:
+                st.write(f"TIP 13612U momentum is not positive, so the model selects the higher-momentum defensive asset: {signal['selected_asset']}.")
         elif signal["regime"] == "risk-on":
             holding = "SSO" if isinstance(signal_strategy, HAASimpleLeveraged2x) else "SPY"
             st.write(f"SPY and TIP 13612U momentum are both strictly positive, so the model selects {holding}.")
         else:
             st.write(f"At least one of SPY or TIP 13612U momentum is not positive, so the model selects the higher-momentum defensive asset: {signal['selected_asset']}.")
-        price_columns = [f"{asset}_price" for asset in signal_assets if f"{asset}_price" in signal.index]
-        momentum_columns = [f"{asset}_13612u" for asset in signal_assets if f"{asset}_13612u" in signal.index]
+        price_columns = [f"{asset}_price" for asset in signal_momentum_assets if f"{asset}_price" in signal.index]
+        momentum_columns = [f"{asset}_13612u" for asset in signal_momentum_assets if f"{asset}_13612u" in signal.index]
         inputs = pd.DataFrame({
             "month-end price": {column.removesuffix("_price"): signal[column] for column in price_columns},
             "13612U momentum": {column.removesuffix("_13612u"): signal[column] for column in momentum_columns},
@@ -336,7 +344,11 @@ if page == "Signals":
 
 if page == "Validation":
     st.subheader("Rules and calculation")
-    if isinstance(strategy, HAAClassicNoQQQ):
+    if isinstance(strategy, HAAClassicLeveragedNoQQQ):
+        st.markdown("""**HAA Classic Leveraged 2x (No QQQ):** TIP is the sole canary and all momentum scores use unleveraged ETFs. When TIP's equal-weighted 13612U momentum is strictly positive, rank IEF, SPY, IWM, PDBC, TLT, VEA, VNQ, and VWO by 13612U, select the top four, and allocate 25% to each mapped holding: IEF→UST, SPY→SSO, IWM→UWM, PDBC→PDBC, TLT→UBT, VEA→EFO, VNQ→URE, VWO→EET. When TIP is zero or negative, compare 1x IEF and BIL momentum; hold UST if IEF wins or BIL otherwise. QQQ is excluded.
+
+**Risk:** high-drawdown leveraged satellite, not a core holding. A monthly signal cannot prevent losses from a fast intramonth crash.""")
+    elif isinstance(strategy, HAAClassicNoQQQ):
         st.markdown("""**HAA Classic (No QQQ):** TIP is the only canary. When TIP's equal-weighted 13612U momentum is strictly positive, hold the top four assets by 13612U from IEF, SPY, IWM, PDBC, TLT, VEA, VNQ, and VWO at 25% each. IEF is eligible in both risk-on and defensive allocations; BIL is defensive-only. QQQ is intentionally excluded. When TIP is zero or negative, hold 100% of the higher-momentum defensive asset, IEF or BIL. No leverage is included.""")
     elif isinstance(strategy, HAASimpleLeveraged2x):
         st.markdown("""**HAA-Simple Leveraged 2x (SSO):** calculate equal-weighted 13612U using unleveraged SPY and TIP. If both are strictly positive, hold 100% SSO. Otherwise select the available defensive asset with the higher 13612U momentum: IEF or BIL. SSO momentum never controls the gate; using SPY avoids de-risking the leveraged sleeve solely because of SSO's amplified drawdown. IEF/BIL remain unleveraged.
@@ -347,16 +359,19 @@ if page == "Validation":
 
     st.markdown("""**13612U:** `(1-month return + 3-month return + 6-month return + 12-month return) / 4`. Each return is `price at signal date / price at its historical month-end - 1`. This implementation therefore requires 12 earlier observations of each asset it actually needs and uses no later prices.
 
-**Data:** Enter an `ASSET=YAHOO_TICKER` mapping in the sidebar to download Yahoo Finance data automatically. The leveraged model additionally requires `SSO=SSO`. Uploaded CSV data replaces an asset’s entire history; use one uploader and name files with their target role, e.g. `SSO.csv`. `Adj Close` is used when Yahoo supplies it; `Close` is the visible fallback. No missing ETF history is fabricated.
+**Data:** Enter an `ASSET=YAHOO_TICKER` mapping in the sidebar to download Yahoo Finance data automatically. Leveraged models additionally require their mapped holding tickers (such as SSO, UST, UWM, UBT, EFO, URE, and EET). Uploaded CSV data replaces an asset’s entire history; use one uploader and name files with their target role, e.g. `SSO.csv`. `Adj Close` is used when Yahoo supplies it; `Close` is the visible fallback. No missing ETF history is fabricated.
 
 **Tax:** applies only when an existing position is sold due to an allocation change. It tracks cost basis and loss carryforward, never taxes the final unrealized position, and is independent of the strategy module.""")
     st.write(f"First valid signal date: **{first_signal.date()}**")
     missing = monthly[monthly.isna().any(axis=1)]
     st.write(f"Months with at least one missing canonical price: **{len(missing)}**")
     st.subheader("Monthly audit table")
-    audit_columns = [f"{asset}_price" for asset in data_assets] + [f"{asset}_13612u" for asset in data_assets]
-    if isinstance(strategy, HAAClassicNoQQQ):
+    audit_momentum_assets = getattr(strategy, "signal_assets", data_assets)
+    audit_columns = [f"{asset}_price" for asset in data_assets] + [f"{asset}_13612u" for asset in audit_momentum_assets]
+    if isinstance(strategy, (HAAClassicNoQQQ, HAAClassicLeveragedNoQQQ)):
         audit_columns += [f"{asset}_rank" for asset in strategy.offensive_assets] + ["selected_assets", "target_weights", "previous_weights"]
+        if isinstance(strategy, HAAClassicLeveragedNoQQQ):
+            audit_columns += ["selected_underlying_assets", "mapped_holding_assets"]
     audit_columns += ["regime", "selected_asset", "previous_asset", "trade", "holding_end", "holding_period_return"]
     audit = result.audit[audit_columns]
     st.dataframe(audit.style.format("{:.6f}", subset=[c for c in audit.columns if c.endswith("13612u") or c.endswith("return")]), use_container_width=True)
