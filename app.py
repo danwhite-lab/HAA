@@ -39,6 +39,16 @@ st.set_page_config(page_title="HAA Backtest", layout="wide", initial_sidebar_sta
 st.markdown("""
 <style>
 .block-container { padding-top: 0.8rem !important; }
+.st-key-header-row { padding-top: 2.35rem !important; }
+.st-key-header-row [data-testid="stHorizontalBlock"] {
+  flex-wrap: nowrap !important;
+  align-items: flex-start !important;
+}
+.st-key-header-row [data-testid="column"]:last-child {
+  flex: 0 0 3rem !important;
+  width: 3rem !important;
+  min-width: 3rem !important;
+}
 @media (max-width: 640px) {
   .block-container { padding: 0.6rem 0.75rem 1.5rem !important; }
   [data-testid="stDataFrame"] { max-width: 100%; overflow-x: auto; }
@@ -76,12 +86,13 @@ st.session_state["ticker_text"] = append_missing_default_tickers(st.session_stat
 
 # Keep the primary signal uncluttered. The compact menu holds navigation and,
 # on Signals, the model chooser; the sidebar remains Backtest-only.
-title_column, menu_column = st.columns([12, 1])
-with menu_column:
-    with st.popover("⋮", help="Navigation and signal model"):
-        page = st.radio("View", ("Signals", "Backtest", "Compare Models", "Rules"), key="page")
-        if page == "Signals":
-            st.selectbox("Signal model", tuple(MODEL_OPTIONS), key="signals_model_name", help="This selector controls the Signals page only; it does not change the Backtest configuration.")
+with st.container(key="header-row"):
+    title_column, menu_column = st.columns([12, 1])
+    with menu_column:
+        with st.popover("⋮", help="Navigation and signal model"):
+            page = st.radio("View", ("Signals", "Backtest", "Compare Models", "Rules"), key="page")
+            if page == "Signals":
+                st.selectbox("Signal model", tuple(MODEL_OPTIONS), key="signals_model_name", help="This selector controls the Signals page only; it does not change the Backtest configuration.")
 
 model_name = st.session_state["model_name"]
 ticker_text = st.session_state["ticker_text"]
@@ -148,6 +159,8 @@ if common_start is None:
     st.stop()
 start = st.session_state.get("start", common_start.date())
 end = st.session_state.get("end", common_end.date())
+# A model can have a shorter history than the previously configured model.
+# Keep saved backtest dates valid when returning to its configuration page.
 start = min(max(start, common_start.date()), common_end.date())
 end = min(max(end, common_start.date()), common_end.date())
 if start > end:
