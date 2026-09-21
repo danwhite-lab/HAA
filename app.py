@@ -135,6 +135,11 @@ except ValueError as exc:
     st.error(str(exc))
     st.stop()
 
+# Shared result-table formatting used by both Backtest and Compare Models.
+percentage_rows = ["CAGR", "Total return", "Maximum drawdown", "Annualized volatility", "Best month", "Worst month", "Annual turnover"]
+ratio_rows = ["Sharpe", "Sortino", "Calmar"]
+numeric_rows = ["Final value", "Allocation changes", "Average changes/year"]
+
 if page == "Backtest":
     st.title(f"{strategy.name} — transparent monthly backtest")
     st.caption("The sidebar configures this backtest only.")
@@ -158,9 +163,6 @@ if page == "Backtest":
     summary.loc["Average changes/year", pre_tax_label] = changes / years if years else 0
     summary.loc["Annual turnover", pre_tax_label] = annual_turnover
     st.subheader("Results")
-    percentage_rows = ["CAGR", "Total return", "Maximum drawdown", "Annualized volatility", "Best month", "Worst month", "Annual turnover"]
-    ratio_rows = ["Sharpe", "Sortino", "Calmar"]
-    numeric_rows = ["Final value", "Allocation changes", "Average changes/year"]
     styled_summary = summary.style.format("{:.2%}", subset=pd.IndexSlice[percentage_rows, :]).format("{:.2f}", subset=pd.IndexSlice[ratio_rows + numeric_rows, :])
     st.dataframe(styled_summary, use_container_width=True)
     curves = pd.DataFrame({pre_tax_label: result.monthly["pre_tax_value"]})
