@@ -286,7 +286,6 @@ if page == "Signals":
             "signal date": signal_date.date().isoformat(),
             "regime": str(signal["regime"]).replace("-", " ").title(),
             "instruction": action,
-            "previous allocation": previous,
             "target allocation": target_allocation,
         }]), use_container_width=True, hide_index=True)
         if effective_start is not None:
@@ -319,13 +318,15 @@ if page == "Signals":
     if "target_weights" in history:
         history["target_weights"] = history["target_weights"].map(lambda weights: ", ".join(f"{asset} {weight:.0%}" for asset, weight in weights.items()))
     history["effective_start"] = [first_trading_day_after(signal_prices, date) for date in history.index]
+    history.index = pd.to_datetime(history.index).strftime("%Y-%m-%d")
     history = history.rename_axis("signal_date")
-    st.dataframe(history.sort_index(ascending=False), use_container_width=True)
-    st.download_button("Download signal history CSV", history.to_csv().encode("utf-8"), f"{signal_strategy.name.lower().replace(' ', '_').replace('(', '').replace(')', '')}_signal_history.csv", "text/csv")
-    st.subheader("Data status")
-    raw_ranges = date_ranges(signal_prices)
-    st.dataframe(raw_ranges[["last_available"]], use_container_width=True)
-    st.caption(f"Latest eligible completed month: {signal_status.completed_through.date()}. A partial current month is never presented as a final signal.")
+    with st.expander("Signal history"):
+        st.dataframe(history.sort_index(ascending=False), use_container_width=True)
+        st.download_button("Download signal history CSV", history.to_csv().encode("utf-8"), f"{signal_strategy.name.lower().replace(' ', '_').replace('(', '').replace(')', '')}_signal_history.csv", "text/csv")
+    with st.expander("Data status"):
+        raw_ranges = date_ranges(signal_prices)
+        st.dataframe(raw_ranges[["last_available"]], use_container_width=True)
+        st.caption(f"Latest eligible completed month: {signal_status.completed_through.date()}. A partial current month is never presented as a final signal.")
     st.caption("Rules-based informational signal only; not investment advice. You are responsible for any trading decision and execution.")
 
 if page == "Validation":
