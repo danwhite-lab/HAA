@@ -84,13 +84,15 @@ all_monthly = to_month_end(all_prices)
 ranges = date_ranges(prices)
 common_start, common_end = common_monthly_period(monthly)
 
-st.subheader("Data coverage")
-st.dataframe(ranges, use_container_width=True)
 if common_start is None:
     st.error("The selected model assets have no common month-end observations. Check the Yahoo ticker mappings or upload compatible CSV histories.")
     st.stop()
-st.info(f"Actual common monthly data period: {common_start.date()} through {common_end.date()}.")
 with st.sidebar:
+    st.caption(f"Common monthly data: {common_start.date()} to {common_end.date()}")
+    with st.expander("Data & validation"):
+        st.caption("Available adjusted-price history for the assets required by the selected model.")
+        st.dataframe(ranges, use_container_width=True, hide_index=True)
+        st.caption(f"Actual common monthly data period: {common_start.date()} through {common_end.date()}.")
     start = st.date_input("Backtest start (holding-period end)", value=common_start.date(), min_value=common_start.date(), max_value=common_end.date())
     end = st.date_input("Backtest end (holding-period end)", value=common_end.date(), min_value=common_start.date(), max_value=common_end.date())
 
