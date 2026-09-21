@@ -9,6 +9,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 from haa.constants import ASSETS, DEFAULT_TAX_RATE
+from haa.comparison import ModelInput, compare_models
 from haa.data import combine_replacements, common_monthly_period, date_ranges, default_ticker_map, download_yahoo_prices, parse_ticker_map, read_uploaded_csv, to_month_end, upload_asset_from_filename
 from haa.engine import run_backtest
 from haa.metrics import annual_returns, performance_metrics
@@ -20,6 +21,7 @@ MODEL_OPTIONS = {
     "HAA-Simple Leveraged 2x (SSO)": HAASimpleLeveraged2x,
     "HAA Classic (No QQQ)": HAAClassicNoQQQ,
 }
+ALL_MODEL_ASSETS = tuple(dict.fromkeys(asset for model_class in MODEL_OPTIONS.values() for asset in getattr(model_class, "data_assets", ASSETS)))
 
 st.set_page_config(page_title="HAA Backtest", layout="wide")
 
@@ -42,15 +44,15 @@ with st.sidebar:
     model_name = st.selectbox("HAA model", tuple(MODEL_OPTIONS), key="model_name", on_change=sync_model_from_sidebar)
     strategy = MODEL_OPTIONS[model_name]()
     data_assets = getattr(strategy, "data_assets", ASSETS)
-    ticker_text = st.text_area("Yahoo Finance ticker sources", value="\n".join(f"{role}={ticker}" for role, ticker in default_ticker_map(data_assets).items()), help="One asset role per line. Example: SPY=SPY. The leveraged model also downloads SSO, but uses SPY—not SSO—for risk-on signals.")
-    uploads = st.file_uploader("Upload replacement CSV files", type="csv", accept_multiple_files=True, help=f"Upload one or more files named with one valid asset: {', '.join(data_assets)}.")
+    ticker_text = st.text_area("Yahoo Finance ticker sources", value="\n".join(f"{role}={ticker}" for role, ticker in default_ticker_map(ALL_MODEL_ASSETS).items()), help="One asset role per line. All available model assets are downloaded so selected models can be compared on the same source data.")
+    uploads = st.file_uploader("Upload replacement CSV files", type="csv", accept_multiple_files=True, help=f"Upload one or more files named with one valid asset: {', '.join(ALL_MODEL_ASSETS)}.")
     initial = st.number_input("Initial investment", min_value=1.0, value=100_000.0, step=1_000.0)
     cost_pct = st.number_input("Transaction cost per entry/change (%)", min_value=0.0, max_value=10.0, value=0.0, step=0.01) / 100
     tax_enabled = st.toggle("Israeli capital-gains tax", value=False)
     tax_rate = st.number_input("Tax rate (%)", min_value=0.0, max_value=100.0, value=DEFAULT_TAX_RATE * 100, step=0.1, disabled=not tax_enabled) / 100
 
 try:
-    ticker_map = parse_ticker_map(ticker_text, data_assets)
+    ticker_map = parse_ticker_map(ticker_text, ALL_MODEL_ASSETS)
 except ValueError as exc:
     st.sidebar.error(str(exc))
     st.stop()
@@ -68,14 +70,16 @@ except Exception as exc:
 replacements = {}
 for upload in uploads or []:
     try:
-        asset = upload_asset_from_filename(upload.name, data_assets)
+        asset = upload_asset_from_filename(upload.name, ALL_MODEL_ASSETS)
         if asset in replacements:
             raise ValueError(f"More than one upload targets {asset}; upload only one replacement file per canonical role.")
         replacements[asset] = read_uploaded_csv(upload.getvalue(), asset)
     except ValueError as exc:
         st.sidebar.error(str(exc))
-prices = combine_replacements(downloaded, replacements, data_assets)
+all_prices = combine_replacements(downloaded, replacements, ALL_MODEL_ASSETS)
+prices = all_prices.loc[:, data_assets]
 monthly = to_month_end(prices)
+all_monthly = to_month_end(all_prices)
 ranges = date_ranges(prices)
 common_start, common_end = common_monthly_period(monthly)
 
@@ -100,7 +104,7 @@ except ValueError as exc:
     st.error(str(exc))
     st.stop()
 
-backtest_tab, signals_tab, validation_tab = st.tabs(["Backtest", "Signals", "Validation"])
+backtest_tab, compare_tab, signals_tab, validation_tab = st.tabs(["Backtest", "Compare Models", "Signals", "Validation"])
 with backtest_tab:
     st.title(f"{strategy.name} — transparent monthly backtest")
     st.caption("Signals are evaluated at month-end and execute for the following holding period; no optimization or synthetic history.")
@@ -141,6 +145,83 @@ with backtest_tab:
     if tax_enabled:
         monthly_returns[after_tax_label] = result.monthly["after_tax_monthly_return"]
     st.dataframe(monthly_returns.style.format("{:.2%}"), use_container_width=True)
+
+with compare_tab:
+    st.title("Compare HAA models")
+    st.caption("Each selected model is independently backtested, then restarted over the exact shared completed holding periods. This is informational only and does not recommend one model.")
+    default_comparison = [model_name, next(name for name in MODEL_OPTIONS if name != model_name)]
+    selected_models = st.multiselect("Models", tuple(MODEL_OPTIONS), default=default_comparison, key="compare_models")
+    if len(selected_models) < 2:
+        st.info("Select at least two models to compare.")
+    else:
+        try:
+            comparison_inputs = {}
+            for selected_name in selected_models:
+                selected_strategy = MODEL_OPTIONS[selected_name]()
+                selected_assets = getattr(selected_strategy, "data_assets", ASSETS)
+                selected_monthly = all_monthly.loc[:, selected_assets]
+                comparison_inputs[selected_name] = ModelInput(selected_name, selected_strategy.decisions(selected_monthly), selected_monthly)
+            model_comparison = compare_models(
+                comparison_inputs,
+                initial,
+                cost_pct,
+                tax_enabled,
+                tax_rate,
+                pd.Timestamp(start),
+                pd.Timestamp(end),
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+        else:
+            st.subheader("Comparable period")
+            st.dataframe(model_comparison.available_periods, use_container_width=True)
+            st.success(f"All results below use **{model_comparison.common_index.min().date()} through {model_comparison.common_index.max().date()}** ({len(model_comparison.common_index)} complete monthly holding periods).")
+            comparison_pre = {name: performance_metrics(backtest.monthly["pre_tax_value"], initial) for name, backtest in model_comparison.results.items()}
+            first_comparison = next(iter(model_comparison.results.values()))
+            comparison_pre["SPY buy-and-hold"] = performance_metrics(first_comparison.monthly["benchmark_value"], initial)
+            comparison_summary = pd.DataFrame(comparison_pre)
+            comparison_years = len(model_comparison.common_index) / 12
+            for name, backtest in model_comparison.results.items():
+                changes = int(backtest.monthly["allocation_change"].sum())
+                turnover = backtest.monthly["turnover"].sum() / comparison_years if "turnover" in backtest.monthly and comparison_years else changes / comparison_years if comparison_years else 0
+                comparison_summary.loc["Allocation changes", name] = changes
+                comparison_summary.loc["Average changes/year", name] = changes / comparison_years if comparison_years else 0
+                comparison_summary.loc["Annual turnover", name] = turnover
+            st.subheader("Pre-tax results")
+            st.dataframe(comparison_summary.style.format("{:.2%}", subset=pd.IndexSlice[percentage_rows, :]).format("{:.2f}", subset=pd.IndexSlice[ratio_rows + numeric_rows, :]), use_container_width=True)
+
+            pre_curves = pd.DataFrame({name: backtest.monthly["pre_tax_value"] for name, backtest in model_comparison.results.items()})
+            pre_curves["SPY buy-and-hold"] = first_comparison.monthly["benchmark_value"]
+            st.plotly_chart(px.line(pre_curves, title="Pre-tax equity curves"), use_container_width=True)
+            st.plotly_chart(px.line(pre_curves.div(pre_curves.cummax()).sub(1), title="Monthly drawdown"), use_container_width=True)
+            annual_comparison = pd.DataFrame({name: annual_returns(backtest.monthly["pre_tax_monthly_return"]) for name, backtest in model_comparison.results.items()})
+            annual_comparison["SPY buy-and-hold"] = annual_returns(first_comparison.monthly["benchmark_monthly_return"])
+            st.subheader("Annual returns")
+            st.dataframe(annual_comparison.style.format("{:.2%}"), use_container_width=True)
+            monthly_comparison = pd.DataFrame({name: backtest.monthly["pre_tax_monthly_return"] for name, backtest in model_comparison.results.items()})
+            monthly_comparison["SPY buy-and-hold"] = first_comparison.monthly["benchmark_monthly_return"]
+            st.subheader("Monthly returns")
+            st.dataframe(monthly_comparison.style.format("{:.2%}"), use_container_width=True)
+            st.download_button("Download common-period monthly returns CSV", monthly_comparison.to_csv().encode("utf-8"), "haa_model_comparison_monthly_returns.csv", "text/csv", key="comparison_monthly_download")
+
+            if tax_enabled:
+                after_summary = pd.DataFrame({name: performance_metrics(backtest.monthly["after_tax_value"], initial) for name, backtest in model_comparison.results.items()})
+                st.subheader("After-tax results")
+                st.dataframe(after_summary.style.format("{:.2%}", subset=pd.IndexSlice[["CAGR", "Total return", "Maximum drawdown", "Annualized volatility", "Best month", "Worst month"], :]).format("{:.2f}", subset=pd.IndexSlice[ratio_rows + ["Final value"], :]), use_container_width=True)
+                after_curves = pd.DataFrame({name: backtest.monthly["after_tax_value"] for name, backtest in model_comparison.results.items()})
+                st.plotly_chart(px.line(after_curves, title="After-tax equity curves"), use_container_width=True)
+
+            st.subheader("Latest allocation in the shared period")
+            allocation_rows = []
+            for name, backtest in model_comparison.results.items():
+                latest = backtest.monthly.iloc[-1]
+                weights = latest.get("target_weights")
+                allocation = ", ".join(f"{asset} {weight:.0%}" for asset, weight in weights.items()) if isinstance(weights, dict) else latest["selected_asset"]
+                allocation_rows.append({"model": name, "signal_date": latest["signal_date"], "regime": latest["regime"], "target allocation": allocation})
+            st.dataframe(pd.DataFrame(allocation_rows).set_index("model"), use_container_width=True)
+            st.subheader("Model audit downloads")
+            for name, backtest in model_comparison.results.items():
+                st.download_button(f"Download {name} common-period audit CSV", backtest.audit.to_csv().encode("utf-8"), f"{name.lower().replace(' ', '_').replace('(', '').replace(')', '')}_comparison_audit.csv", "text/csv", key=f"comparison_audit_{name}")
 
 with signals_tab:
     st.title(f"{strategy.name} — current monthly signal")
