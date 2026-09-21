@@ -37,6 +37,10 @@ pytest
 
 Tests cover the decision branches, a manually calculated 13612U example, future-data isolation, next-period execution, unchanged-allocation trade handling, matching benchmark dates, Classic HAA top-four selection and tie-breaking, weighted portfolio execution, and realized-only tax accounting including partial sales.
 
+## Compare models
+
+The **Compare Models** tab runs two or more existing models independently over the intersection of their valid, completed monthly holding periods. It restarts every selected model at the first shared period, so all curves, returns, and the SPY benchmark use identical dates and initial value. Classic HAA can shorten the comparison period because its PDBC history begins later. The comparison is informational only and does not recommend one model.
+
 ## Tax treatment
 
 Tax is optional and defaults to 25%. The independent tax module taxes only realized positive gains when a position is sold on an allocation change. It records cost basis and uses prior realized losses to offset later realized gains. It does not liquidate or tax the final, unrealized position.
