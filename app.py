@@ -35,7 +35,16 @@ MODEL_RULES = {
 }
 ALL_MODEL_ASSETS = tuple(dict.fromkeys(asset for model_class in MODEL_OPTIONS.values() for asset in getattr(model_class, "data_assets", ASSETS)))
 
-st.set_page_config(page_title="HAA Backtest", layout="wide")
+st.set_page_config(page_title="HAA Backtest", layout="wide", initial_sidebar_state="collapsed")
+st.markdown("""
+<style>
+.block-container { padding-top: 0.8rem !important; }
+@media (max-width: 640px) {
+  .block-container { padding: 0.6rem 0.75rem 1.5rem !important; }
+  [data-testid="stDataFrame"] { max-width: 100%; overflow-x: auto; }
+}
+</style>
+""", unsafe_allow_html=True)
 
 DEFAULT_TICKERS = "\n".join(f"{role}={ticker}" for role, ticker in default_ticker_map(ALL_MODEL_ASSETS).items())
 DEFAULT_MODEL = "HAA-Simple"
@@ -61,14 +70,16 @@ for key, value in {
     "uploaded_replacements": {},
 }.items():
     st.session_state.setdefault(key, value)
+if st.session_state["page"] == "Validation":
+    st.session_state["page"] = "Rules"
 st.session_state["ticker_text"] = append_missing_default_tickers(st.session_state["ticker_text"])
 
 # Keep the primary signal uncluttered. The compact menu holds navigation and,
 # on Signals, the model chooser; the sidebar remains Backtest-only.
-_, menu_column = st.columns([12, 1])
+title_column, menu_column = st.columns([12, 1])
 with menu_column:
     with st.popover("⋮", help="Navigation and signal model"):
-        page = st.radio("View", ("Signals", "Backtest", "Compare Models", "Validation"), key="page")
+        page = st.radio("View", ("Signals", "Backtest", "Compare Models", "Rules"), key="page")
         if page == "Signals":
             st.selectbox("Signal model", tuple(MODEL_OPTIONS), key="signals_model_name", help="This selector controls the Signals page only; it does not change the Backtest configuration.")
 
@@ -169,7 +180,7 @@ ratio_rows = ["Sharpe", "Sortino", "Calmar"]
 numeric_rows = ["Final value", "Allocation changes", "Average changes/year"]
 
 if page == "Backtest":
-    st.title(f"{strategy.name} — transparent monthly backtest")
+    title_column.title(strategy.name)
     st.caption("The sidebar configures this backtest only.")
     st.caption("Signals are evaluated at month-end and execute for the following holding period; no optimization or synthetic history.")
     if hasattr(strategy, "risk_warning"):
@@ -214,7 +225,7 @@ if page == "Backtest":
     st.dataframe(monthly_returns.style.format("{:.2%}"), use_container_width=True)
 
 if page == "Compare Models":
-    st.title("Compare HAA models")
+    title_column.title("Compare Models")
     st.caption("Each selected model is independently backtested, then restarted over the exact shared completed holding periods. This is informational only and does not recommend one model.")
     default_comparison = [model_name, next(name for name in MODEL_OPTIONS if name != model_name)]
     selected_models = st.multiselect("Models", tuple(MODEL_OPTIONS), default=default_comparison, key="compare_models")
@@ -300,8 +311,8 @@ if page == "Signals":
     signal_decisions = signal_strategy.decisions(signal_monthly)
     signal_status = latest_actionable_signal(signal_decisions, signal_monthly, signal_data_assets)
     if signal_status.decision is None:
-        st.title("Signal")
-        st.caption(f"Model: {signal_model_name} · Completed month-end signal")
+        title_column.title("Signal")
+        title_column.caption(f"Model: {signal_model_name} · Completed month-end signal")
         st.error(signal_status.reason)
     else:
         signal = signal_status.decision
@@ -315,8 +326,8 @@ if page == "Signals":
         else:
             action = "Hold" if not bool(signal["trade"]) else (f"Buy {signal['selected_asset']}" if previous == "No prior allocation" else f"Switch {previous} → {signal['selected_asset']}")
             target_allocation = f"100% {signal['selected_asset']}"
-        st.title(f"Signal - {target_allocation}")
-        st.caption(f"Model: {signal_model_name} · Completed month-end signal")
+        title_column.title(f"Signal - {target_allocation}")
+        title_column.caption(f"Model: {signal_model_name} · Completed month-end signal")
         signal_summary = pd.DataFrame([{
             "signal date": signal_date.date().isoformat(),
             "regime": str(signal["regime"]).replace("-", " ").title(),
@@ -371,7 +382,8 @@ if page == "Signals":
         st.caption(f"Latest eligible completed month: {signal_status.completed_through.date()}. A partial current month is never presented as a final signal.")
     st.caption("Rules-based informational signal only; not investment advice. You are responsible for any trading decision and execution.")
 
-if page == "Validation":
+if page == "Rules":
+    title_column.title("Rules")
     st.subheader("Model rules")
     for rule_name, rule in MODEL_RULES.items():
         with st.expander(rule_name, expanded=rule_name == model_name):
