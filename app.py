@@ -99,6 +99,10 @@ for key, value in {
     "cost_pct": 0.0,
     "tax_enabled": False,
     "tax_rate": DEFAULT_TAX_RATE,
+    "compare_initial": 100_000.0,
+    "compare_cost_pct": 0.0,
+    "compare_tax_enabled": False,
+    "compare_tax_rate": DEFAULT_TAX_RATE,
     "uploaded_replacements": {},
 }.items():
     st.session_state.setdefault(key, value)
@@ -298,7 +302,7 @@ if page == "Backtest":
 
 if page == "Compare Models":
     title_column.title("Compare Models")
-    st.caption("Each selected model is independently backtested, then restarted over the exact shared completed holding periods. This is informational only and does not recommend one model.")
+    st.caption("Each selected model is independently backtested, then restarted over the exact shared completed holding periods. Comparison settings below are independent of the Backtest page. This is informational only and does not recommend one model.")
     default_comparison = [model_name, next(name for name in MODEL_OPTIONS if name != model_name)]
     selected_models = st.multiselect("Models", tuple(MODEL_OPTIONS), default=default_comparison, key="compare_models")
     if len(selected_models) < 2:
@@ -306,22 +310,47 @@ if page == "Compare Models":
     else:
         try:
             comparison_inputs = {}
+            comparison_bounds = []
             for selected_name in selected_models:
                 selected_strategy = MODEL_OPTIONS[selected_name]()
                 selected_assets = getattr(selected_strategy, "data_assets", ASSETS)
                 selected_daily = all_prices.loc[:, selected_assets]
                 selected_monthly = to_month_end(selected_daily)
                 comparison_inputs[selected_name] = ModelInput(selected_name, selected_strategy.decisions(selected_monthly), selected_monthly, selected_daily, getattr(selected_strategy, "benchmark_asset", "SPY"))
+                first_date, last_date = common_monthly_period(selected_monthly)
+                if first_date is None or last_date is None:
+                    raise ValueError(f"{selected_name} has no common monthly data.")
+                comparison_bounds.append((first_date, last_date))
             if len({model.benchmark_asset for model in comparison_inputs.values()}) != 1:
                 raise ValueError("Compare only models with the same buy-and-hold benchmark. HAA-Simple Israel uses CSPX_IL; the other current models use SPY.")
+            comparison_start_min = max(first for first, _ in comparison_bounds).date()
+            comparison_end_max = min(last for _, last in comparison_bounds).date()
+            compare_start = min(max(st.session_state.get("compare_start", comparison_start_min), comparison_start_min), comparison_end_max)
+            compare_end = min(max(st.session_state.get("compare_end", comparison_end_max), comparison_start_min), comparison_end_max)
+            if compare_start > compare_end:
+                compare_start = comparison_start_min
+            with st.expander("Comparison configuration", expanded=True):
+                config_left, config_right = st.columns(2)
+                with config_left:
+                    compare_initial = st.number_input("Initial investment", min_value=1.0, value=100_000.0, step=1_000.0, key="comparison_initial")
+                    compare_cost_pct = st.number_input("Transaction cost per entry/change (%)", min_value=0.0, max_value=10.0, value=0.0, step=0.01, key="comparison_cost_pct") / 100
+                    compare_tax_enabled = st.toggle("Israeli capital-gains tax", value=False, key="comparison_tax_enabled")
+                    compare_tax_rate = st.number_input("Tax rate (%)", min_value=0.0, max_value=100.0, value=DEFAULT_TAX_RATE * 100, step=0.1, key="comparison_tax_rate", disabled=not compare_tax_enabled) / 100
+                with config_right:
+                    st.caption(f"Shared source-data window: {comparison_start_min} through {comparison_end_max}")
+                    compare_start = st.date_input("Comparison start (holding-period end)", value=compare_start, min_value=comparison_start_min, max_value=comparison_end_max, key="compare_start")
+                    compare_end = st.date_input("Comparison end (holding-period end)", value=compare_end, min_value=comparison_start_min, max_value=comparison_end_max, key="compare_end")
+                    if compare_start > compare_end:
+                        st.error("Comparison start must not be after comparison end.")
+                        st.stop()
             model_comparison = compare_models(
                 comparison_inputs,
-                initial,
-                cost_pct,
-                tax_enabled,
-                tax_rate,
-                pd.Timestamp(start),
-                pd.Timestamp(end),
+                compare_initial,
+                compare_cost_pct,
+                compare_tax_enabled,
+                compare_tax_rate,
+                pd.Timestamp(compare_start),
+                pd.Timestamp(compare_end),
             )
         except ValueError as exc:
             st.error(str(exc))
@@ -329,10 +358,10 @@ if page == "Compare Models":
             st.subheader("Comparable period")
             st.dataframe(model_comparison.available_periods, use_container_width=True)
             st.success(f"All results below use **{model_comparison.common_index.min().date()} through {model_comparison.common_index.max().date()}** ({len(model_comparison.common_index)} complete monthly holding periods).")
-            comparison_pre = {name: performance_metrics(backtest.monthly["pre_tax_value"], initial) for name, backtest in model_comparison.results.items()}
+            comparison_pre = {name: performance_metrics(backtest.monthly["pre_tax_value"], compare_initial) for name, backtest in model_comparison.results.items()}
             first_comparison = next(iter(model_comparison.results.values()))
             comparison_benchmark_label = f"{next(iter(comparison_inputs.values())).benchmark_asset} buy-and-hold"
-            comparison_pre[comparison_benchmark_label] = performance_metrics(first_comparison.monthly["benchmark_value"], initial)
+            comparison_pre[comparison_benchmark_label] = performance_metrics(first_comparison.monthly["benchmark_value"], compare_initial)
             comparison_summary = pd.DataFrame(comparison_pre)
             comparison_years = len(model_comparison.common_index) / 12
             for name, backtest in model_comparison.results.items():
@@ -358,12 +387,19 @@ if page == "Compare Models":
             st.dataframe(monthly_comparison.style.format("{:.2%}"), use_container_width=True)
             st.download_button("Download common-period monthly returns CSV", monthly_comparison.to_csv().encode("utf-8"), "haa_model_comparison_monthly_returns.csv", "text/csv", key="comparison_monthly_download")
 
-            if tax_enabled:
-                after_summary = pd.DataFrame({name: performance_metrics(backtest.monthly["after_tax_value"], initial) for name, backtest in model_comparison.results.items()})
+            if compare_tax_enabled:
+                after_summary = pd.DataFrame({name: performance_metrics(backtest.monthly["after_tax_value"], compare_initial) for name, backtest in model_comparison.results.items()})
                 st.subheader("After-tax results")
                 st.dataframe(after_summary.style.format("{:.2%}", subset=pd.IndexSlice[["CAGR", "Total return", "Maximum drawdown", "Annualized volatility", "Best month", "Worst month"], :]).format("{:.2f}", subset=pd.IndexSlice[ratio_rows + ["Final value"], :]), use_container_width=True)
                 after_curves = pd.DataFrame({name: backtest.monthly["after_tax_value"] for name, backtest in model_comparison.results.items()})
                 st.plotly_chart(px.line(after_curves, title="After-tax equity curves"), use_container_width=True)
+                after_annual = pd.DataFrame({name: annual_returns(backtest.monthly["after_tax_monthly_return"]) for name, backtest in model_comparison.results.items()})
+                st.subheader("After-tax annual returns")
+                st.dataframe(after_annual.style.format("{:.2%}"), use_container_width=True)
+                after_monthly = pd.DataFrame({name: backtest.monthly["after_tax_monthly_return"] for name, backtest in model_comparison.results.items()})
+                st.subheader("After-tax monthly returns")
+                st.dataframe(after_monthly.style.format("{:.2%}"), use_container_width=True)
+                st.download_button("Download common-period after-tax monthly returns CSV", after_monthly.to_csv().encode("utf-8"), "haa_model_comparison_after_tax_monthly_returns.csv", "text/csv", key="comparison_after_tax_monthly_download")
 
             st.subheader("Latest allocation in the shared period")
             allocation_rows = []
