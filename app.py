@@ -67,6 +67,17 @@ DEFAULT_TICKERS = "\n".join(f"{role}={ticker}" for role, ticker in default_ticke
 DEFAULT_MODEL = "HAA-Simple"
 
 
+def execution_assets(decision: pd.Series, benchmark_asset: str) -> tuple[str, ...]:
+    """Return individual holdings required to find an executable next date.
+
+    Multi-asset strategies store their display label as a comma-separated
+    string, but price lookup must receive the underlying asset symbols.
+    """
+    weights = decision.get("target_weights")
+    holdings = tuple(weights) if isinstance(weights, dict) else (str(decision["selected_asset"]),)
+    return tuple(dict.fromkeys((*holdings, benchmark_asset)))
+
+
 def append_missing_default_tickers(text: str) -> str:
     """Retain custom sources while migrating saved sessions to new model assets."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -382,7 +393,7 @@ if page == "Signals":
     else:
         signal = signal_status.decision
         signal_date = pd.Timestamp(signal.name)
-        effective_start = first_trading_day_after(signal_prices, signal_date, (signal["selected_asset"], getattr(signal_strategy, "benchmark_asset", "SPY")))
+        effective_start = first_trading_day_after(signal_prices, signal_date, execution_assets(signal, getattr(signal_strategy, "benchmark_asset", "SPY")))
         previous = signal["previous_asset"] if pd.notna(signal["previous_asset"]) else "No prior allocation"
         weights = signal.get("target_weights", {signal["selected_asset"]: 1.0})
         if getattr(signal_strategy, "is_multi_asset", False):
@@ -447,9 +458,9 @@ if page == "Signals":
         history.index.name = "signal_date"
     else:
         history = signal_decisions.loc[:, history_columns].copy()
+        history["effective_start"] = [first_trading_day_after(signal_prices, date, execution_assets(history.loc[date], getattr(signal_strategy, "benchmark_asset", "SPY"))) for date in history.index]
         if "target_weights" in history:
             history["target_weights"] = history["target_weights"].map(lambda weights: ", ".join(f"{asset} {weight:.0%}" for asset, weight in weights.items()))
-        history["effective_start"] = [first_trading_day_after(signal_prices, date, (history.loc[date, "selected_asset"], getattr(signal_strategy, "benchmark_asset", "SPY"))) for date in history.index]
         history.index = pd.to_datetime(history.index).strftime("%Y-%m-%d")
         history = history.rename_axis("signal_date")
     with st.expander("Signal history"):
@@ -459,7 +470,7 @@ if page == "Signals":
         st.caption("This signal uses completed month-end data only. Backtest settings do not affect it.")
         if isinstance(signal_strategy, HAASimpleIsrael) and tase_warning:
             st.warning(f"Public TASE/Maya retrieval issue: {tase_warning}")
-        st.dataframe(source_metadata.loc[signal_data_assets], use_container_width=True)
+        st.dataframe(source_metadata.loc[list(signal_data_assets)], use_container_width=True)
         raw_ranges = date_ranges(signal_prices)
         st.dataframe(raw_ranges, use_container_width=True)
         st.caption(f"Latest eligible completed month: {signal_status.completed_through.date()}. A partial current month is never presented as a final signal.")
@@ -481,7 +492,7 @@ if page == "Rules":
     st.subheader("Data sources and coverage")
     if isinstance(strategy, HAASimpleIsrael) and tase_warning:
         st.warning(f"Public TASE/Maya retrieval issue: {tase_warning}")
-    st.dataframe(source_metadata.loc[data_assets].join(date_ranges(prices)), use_container_width=True)
+    st.dataframe(source_metadata.loc[list(data_assets)].join(date_ranges(prices)), use_container_width=True)
     missing = monthly[monthly.isna().any(axis=1)]
     st.write(f"Months with at least one missing canonical price: **{len(missing)}**")
     audit_momentum_assets = getattr(strategy, "signal_assets", data_assets)
