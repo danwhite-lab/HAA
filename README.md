@@ -6,18 +6,19 @@ A deliberately small, auditable Streamlit backtester for defined HAA variants. I
 
 - **HAA-Simple:** uses SPY and TIP 13612U signals; holds SPY only when both are positive, otherwise the stronger of IEF/BIL.
 - **HAA-Simple Leveraged 2x (SSO):** uses the *same unleveraged SPY and TIP signals* but holds SSO in risk-on periods. It always de-risks to unleveraged IEF/BIL. SSO momentum never controls the gate. This is a high-drawdown satellite, not a core holding.
+- **HAA-Simple Israel:** retains TIP as a U.S. signal-only canary, uses TASE-listed CSPX (1159250) for the equity signal/holding, and compares TASE-listed iShares $ Treasury Bond 7–10yr UCITS (1159268) with Ayalon Kaspit (5136866) in risk-off periods. It is an ILS local-investability variant with its own CSPX benchmark; it does not use MAKAM 800 as a holding series.
 - **HAA Classic (No QQQ):** TIP is the sole canary. When TIP 13612U is positive, it holds the top four assets at 25% each from IEF, SPY, IWM, PDBC, TLT, VEA, VNQ, and VWO. IEF is eligible in both the risk-on ranking and the IEF/BIL defensive choice; BIL is defensive-only. QQQ and leverage are intentionally excluded.
 - **HAA Classic Leveraged 2x (No QQQ):** calculates the same TIP gate and top-four ranking on the 1× Classic no-QQQ universe, then holds 2× substitutes: IEF→UST, SPY→SSO, IWM→UWM, TLT→UBT, VEA→EFO, VNQ→URE, and VWO→EET. PDBC and BIL remain unleveraged. Risk-off compares 1× IEF/BIL momentum and holds UST or BIL. This is a high-drawdown satellite, not a core holding.
 
 ## What it does
 
-At each calendar month-end it uses Yahoo Finance adjusted close data (or a user replacement CSV) for SPY, TIP, IEF, and BIL. It calculates HAA's equal-weighted **13612U** composite:
+At each completed month it uses Yahoo Finance adjusted close data (or a user replacement CSV) for the selected model's assets. It calculates HAA's equal-weighted **13612U** composite:
 
 ```
 (1-month return + 3-month return + 6-month return + 12-month return) / 4
 ```
 
-Each return is `price at the signal date / price at the corresponding earlier month-end - 1`. This needs 12 prior observations for each asset involved in the decision. If SPY and TIP momentum are strictly positive, HAA-Simple selects SPY; otherwise it selects the available defensive asset with the higher momentum. Before BIL has accumulated enough history, a defensive allocation uses IEF when its valid history is available; no proxy data is created. The selected asset earns the **next** month's return, so the month-end signal cannot affect the same period it observes.
+Each return is `price at the signal date / price at the corresponding earlier month-end - 1`. This needs 12 prior observations for every asset involved in the decision; no pre-inception cash proxy is created. The signal is calculated after the final complete trading-day close, entered on the next valid execution date, and exited on the next monthly execution date. The current incomplete month is excluded.
 
 ## Install and run
 
