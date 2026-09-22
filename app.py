@@ -15,11 +15,12 @@ from haa.data import combine_replacements, common_monthly_period, date_ranges, d
 from haa.engine import run_backtest
 from haa.metrics import annual_returns, performance_metrics
 from haa.signals import first_trading_day_after, latest_actionable_signal
-from haa.strategies import HAAClassicLeveragedNoQQQ, HAAClassicNoQQQ, HAASimple, HAASimpleLeveraged2x
+from haa.strategies import HAAClassicLeveragedNoQQQ, HAAClassicNoQQQ, HAASimple, HAASimpleIsrael, HAASimpleLeveraged2x
 
 MODEL_OPTIONS = {
     "HAA-Simple": HAASimple,
     "HAA-Simple Leveraged 2x (SSO)": HAASimpleLeveraged2x,
+    "HAA-Simple Israel": HAASimpleIsrael,
     "HAA Classic (No QQQ)": HAAClassicNoQQQ,
     "HAA Classic Leveraged 2x (No QQQ)": HAAClassicLeveragedNoQQQ,
 }
@@ -28,6 +29,7 @@ MODEL_RULES = {
     "HAA-Simple Leveraged 2x (SSO)": """**HAA-Simple Leveraged 2x (SSO):** Calculate equal-weighted 13612U using unleveraged SPY and TIP. If both are strictly positive, hold 100% SSO. Otherwise, compare IEF and BIL momentum and hold the higher-momentum defensive asset. SSO momentum never controls the gate; IEF and BIL remain unleveraged.
 
 **Risk:** high-drawdown satellite, not a core holding. A monthly signal cannot prevent losses from a fast intramonth crash.""",
+    "HAA-Simple Israel": """**HAA-Simple Israel:** TIP is a U.S. signal-only canary. Use equal-weighted 13612U momentum for TIP, TASE-listed CSPX (1159250), iShares $ Treasury Bond 7–10yr UCITS (1159268), and Ayalon Kaspit (5136866). If TIP and CSPX are strictly positive, hold 100% CSPX. Otherwise compare 1159268 and Ayalon Kaspit and hold the higher-momentum asset; an exact tie selects 1159268. All instruments require real 12-month history. This ILS local-investability variant includes USD/ILS exposure; MAKAM 800 is not a holding series.""",
     "HAA Classic (No QQQ)": """**HAA Classic (No QQQ):** TIP is the sole canary. If TIP's equal-weighted 13612U momentum is strictly positive, rank IEF, SPY, IWM, PDBC, TLT, VEA, VNQ, and VWO by 13612U and hold the top four at 25% each. If TIP is zero or negative, compare IEF and BIL momentum and hold the higher-momentum asset. QQQ is intentionally excluded; no leverage is used.""",
     "HAA Classic Leveraged 2x (No QQQ)": """**HAA Classic Leveraged 2x (No QQQ):** TIP is the sole canary and all momentum scores use unleveraged ETFs. If TIP's equal-weighted 13612U momentum is strictly positive, rank IEF, SPY, IWM, PDBC, TLT, VEA, VNQ, and VWO, select the top four, and allocate 25% to each mapped holding: IEF→UST, SPY→SSO, IWM→UWM, PDBC→PDBC, TLT→UBT, VEA→EFO, VNQ→URE, and VWO→EET. If TIP is zero or negative, compare 1× IEF and BIL momentum; hold UST if IEF wins or BIL otherwise. QQQ is excluded.
 
@@ -64,7 +66,8 @@ def append_missing_default_tickers(text: str) -> str:
     """Retain custom sources while migrating saved sessions to new model assets."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     roles = {line.split("=", 1)[0].strip().upper() for line in lines if "=" in line}
-    lines.extend(f"{asset}={asset}" for asset in ALL_MODEL_ASSETS if asset not in roles)
+    defaults = default_ticker_map(ALL_MODEL_ASSETS)
+    lines.extend(f"{asset}={defaults[asset]}" for asset in ALL_MODEL_ASSETS if asset not in roles)
     return "\n".join(lines)
 
 
@@ -118,6 +121,8 @@ if page == "Backtest":
 
 strategy = MODEL_OPTIONS[model_name]()
 data_assets = getattr(strategy, "data_assets", ASSETS)
+benchmark_asset = getattr(strategy, "benchmark_asset", "SPY")
+benchmark_label = f"{benchmark_asset} buy-and-hold"
 
 try:
     ticker_map = parse_ticker_map(ticker_text, ALL_MODEL_ASSETS)
@@ -183,7 +188,7 @@ if decisions.empty:
     st.stop()
 first_signal = decisions.index.min()
 try:
-    result = run_backtest(decisions, monthly, initial, cost_pct, tax_enabled, tax_rate, pd.Timestamp(start), pd.Timestamp(end), daily_prices=prices)
+    result = run_backtest(decisions, monthly, initial, cost_pct, tax_enabled, tax_rate, pd.Timestamp(start), pd.Timestamp(end), daily_prices=prices, benchmark_asset=benchmark_asset)
 except ValueError as exc:
     st.error(str(exc))
     st.stop()
@@ -207,7 +212,7 @@ if page == "Backtest":
         comparison[after_tax_label] = performance_metrics(result.monthly["after_tax_value"], initial)
     # Keep the benchmark at the far right; the after-tax strategy result sits
     # beside its pre-tax counterpart for direct capital-gains comparison.
-    comparison["SPY buy-and-hold"] = performance_metrics(result.monthly["benchmark_value"], initial)
+    comparison[benchmark_label] = performance_metrics(result.monthly["benchmark_value"], initial)
     summary = pd.DataFrame(comparison)
     changes = int(result.monthly["allocation_change"].sum())
     years = len(result.monthly) / 12
@@ -221,7 +226,7 @@ if page == "Backtest":
     curves = pd.DataFrame({pre_tax_label: result.monthly["pre_tax_value"]})
     if tax_enabled:
         curves[after_tax_label] = result.monthly["after_tax_value"]
-    curves["SPY buy-and-hold"] = result.monthly["benchmark_value"]
+    curves[benchmark_label] = result.monthly["benchmark_value"]
     st.plotly_chart(px.line(curves, title="Equity curve"), use_container_width=True)
     drawdowns = curves.div(curves.cummax()).sub(1)
     st.plotly_chart(px.line(drawdowns, title="Drawdown"), use_container_width=True)
@@ -229,13 +234,13 @@ if page == "Backtest":
     annual = pd.DataFrame({pre_tax_label: annual_returns(result.monthly["pre_tax_monthly_return"])})
     if tax_enabled:
         annual[after_tax_label] = annual_returns(result.monthly["after_tax_monthly_return"])
-    annual["SPY buy-and-hold"] = annual_returns(result.monthly["benchmark_monthly_return"])
+    annual[benchmark_label] = annual_returns(result.monthly["benchmark_monthly_return"])
     st.dataframe(annual.style.format("{:.2%}"), use_container_width=True)
     st.subheader("Monthly returns")
     monthly_returns = pd.DataFrame({pre_tax_label: result.monthly["pre_tax_monthly_return"]})
     if tax_enabled:
         monthly_returns[after_tax_label] = result.monthly["after_tax_monthly_return"]
-    monthly_returns["SPY buy-and-hold"] = result.monthly["benchmark_monthly_return"]
+    monthly_returns[benchmark_label] = result.monthly["benchmark_monthly_return"]
     st.dataframe(monthly_returns.style.format("{:.2%}"), use_container_width=True)
 
 if page == "Compare Models":
@@ -251,8 +256,11 @@ if page == "Compare Models":
             for selected_name in selected_models:
                 selected_strategy = MODEL_OPTIONS[selected_name]()
                 selected_assets = getattr(selected_strategy, "data_assets", ASSETS)
-                selected_monthly = all_monthly.loc[:, selected_assets]
-                comparison_inputs[selected_name] = ModelInput(selected_name, selected_strategy.decisions(selected_monthly), selected_monthly, all_prices.loc[:, selected_assets])
+                selected_daily = all_prices.loc[:, selected_assets]
+                selected_monthly = to_month_end(selected_daily)
+                comparison_inputs[selected_name] = ModelInput(selected_name, selected_strategy.decisions(selected_monthly), selected_monthly, selected_daily, getattr(selected_strategy, "benchmark_asset", "SPY"))
+            if len({model.benchmark_asset for model in comparison_inputs.values()}) != 1:
+                raise ValueError("Compare only models with the same buy-and-hold benchmark. HAA-Simple Israel uses CSPX_IL; the other current models use SPY.")
             model_comparison = compare_models(
                 comparison_inputs,
                 initial,
@@ -270,7 +278,8 @@ if page == "Compare Models":
             st.success(f"All results below use **{model_comparison.common_index.min().date()} through {model_comparison.common_index.max().date()}** ({len(model_comparison.common_index)} complete monthly holding periods).")
             comparison_pre = {name: performance_metrics(backtest.monthly["pre_tax_value"], initial) for name, backtest in model_comparison.results.items()}
             first_comparison = next(iter(model_comparison.results.values()))
-            comparison_pre["SPY buy-and-hold"] = performance_metrics(first_comparison.monthly["benchmark_value"], initial)
+            comparison_benchmark_label = f"{next(iter(comparison_inputs.values())).benchmark_asset} buy-and-hold"
+            comparison_pre[comparison_benchmark_label] = performance_metrics(first_comparison.monthly["benchmark_value"], initial)
             comparison_summary = pd.DataFrame(comparison_pre)
             comparison_years = len(model_comparison.common_index) / 12
             for name, backtest in model_comparison.results.items():
@@ -283,15 +292,15 @@ if page == "Compare Models":
             st.dataframe(comparison_summary.style.format("{:.2%}", subset=pd.IndexSlice[percentage_rows, :]).format("{:.2f}", subset=pd.IndexSlice[ratio_rows + numeric_rows, :]), use_container_width=True)
 
             pre_curves = pd.DataFrame({name: backtest.monthly["pre_tax_value"] for name, backtest in model_comparison.results.items()})
-            pre_curves["SPY buy-and-hold"] = first_comparison.monthly["benchmark_value"]
+            pre_curves[comparison_benchmark_label] = first_comparison.monthly["benchmark_value"]
             st.plotly_chart(px.line(pre_curves, title="Pre-tax equity curves"), use_container_width=True)
             st.plotly_chart(px.line(pre_curves.div(pre_curves.cummax()).sub(1), title="Monthly drawdown"), use_container_width=True)
             annual_comparison = pd.DataFrame({name: annual_returns(backtest.monthly["pre_tax_monthly_return"]) for name, backtest in model_comparison.results.items()})
-            annual_comparison["SPY buy-and-hold"] = annual_returns(first_comparison.monthly["benchmark_monthly_return"])
+            annual_comparison[comparison_benchmark_label] = annual_returns(first_comparison.monthly["benchmark_monthly_return"])
             st.subheader("Annual returns")
             st.dataframe(annual_comparison.style.format("{:.2%}"), use_container_width=True)
             monthly_comparison = pd.DataFrame({name: backtest.monthly["pre_tax_monthly_return"] for name, backtest in model_comparison.results.items()})
-            monthly_comparison["SPY buy-and-hold"] = first_comparison.monthly["benchmark_monthly_return"]
+            monthly_comparison[comparison_benchmark_label] = first_comparison.monthly["benchmark_monthly_return"]
             st.subheader("Monthly returns")
             st.dataframe(monthly_comparison.style.format("{:.2%}"), use_container_width=True)
             st.download_button("Download common-period monthly returns CSV", monthly_comparison.to_csv().encode("utf-8"), "haa_model_comparison_monthly_returns.csv", "text/csv", key="comparison_monthly_download")
@@ -331,7 +340,7 @@ if page == "Signals":
     else:
         signal = signal_status.decision
         signal_date = pd.Timestamp(signal.name)
-        effective_start = first_trading_day_after(signal_prices, signal_date)
+        effective_start = first_trading_day_after(signal_prices, signal_date, (signal["selected_asset"], getattr(signal_strategy, "benchmark_asset", "SPY")))
         previous = signal["previous_asset"] if pd.notna(signal["previous_asset"]) else "No prior allocation"
         weights = signal.get("target_weights", {signal["selected_asset"]: 1.0})
         if getattr(signal_strategy, "is_multi_asset", False):
@@ -364,6 +373,10 @@ if page == "Signals":
                 st.write(f"TIP 13612U momentum is not positive, so the model compares 1x IEF and BIL momentum and holds the mapped defensive asset: {signal['selected_asset']}.")
             else:
                 st.write(f"TIP 13612U momentum is not positive, so the model selects the higher-momentum defensive asset: {signal['selected_asset']}.")
+        elif isinstance(signal_strategy, HAASimpleIsrael) and signal["regime"] == "risk-on":
+            st.write("TIP and CSPX_IL 13612U momentum are both strictly positive, so the model selects CSPX_IL.")
+        elif isinstance(signal_strategy, HAASimpleIsrael):
+            st.write(f"At least one of TIP or CSPX_IL 13612U momentum is not positive, so the model selects the higher-momentum Israeli defensive asset: {signal['selected_asset']}.")
         elif signal["regime"] == "risk-on":
             holding = "SSO" if isinstance(signal_strategy, HAASimpleLeveraged2x) else "SPY"
             st.write(f"SPY and TIP 13612U momentum are both strictly positive, so the model selects {holding}.")
@@ -383,7 +396,7 @@ if page == "Signals":
     history = signal_decisions.loc[:, history_columns].copy()
     if "target_weights" in history:
         history["target_weights"] = history["target_weights"].map(lambda weights: ", ".join(f"{asset} {weight:.0%}" for asset, weight in weights.items()))
-    history["effective_start"] = [first_trading_day_after(signal_prices, date) for date in history.index]
+    history["effective_start"] = [first_trading_day_after(signal_prices, date, (history.loc[date, "selected_asset"], getattr(signal_strategy, "benchmark_asset", "SPY"))) for date in history.index]
     history.index = pd.to_datetime(history.index).strftime("%Y-%m-%d")
     history = history.rename_axis("signal_date")
     with st.expander("Signal history"):
