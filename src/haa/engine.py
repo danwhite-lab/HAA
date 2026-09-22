@@ -25,6 +25,7 @@ def run_backtest(
     start: pd.Timestamp | None = None,
     end: pd.Timestamp | None = None,
     daily_prices: pd.DataFrame | None = None,
+    benchmark_asset: str = "SPY",
 ) -> BacktestResult:
     """Execute one allocation for the month following each signal.
 
@@ -34,7 +35,7 @@ def run_backtest(
     has no future holding period and is excluded.
     """
     if "target_weights" in decisions.columns:
-        return _run_weighted_backtest(decisions, monthly_prices, initial_investment, transaction_cost, tax_enabled, tax_rate, start, end, daily_prices)
+        return _run_weighted_backtest(decisions, monthly_prices, initial_investment, transaction_cost, tax_enabled, tax_rate, start, end, daily_prices, benchmark_asset)
     if decisions.empty:
         raise ValueError("No valid signals: at least 13 complete month-end observations are required.")
     prices = monthly_prices.sort_index()
@@ -42,6 +43,7 @@ def run_backtest(
     rows = []
     decision_dates = pd.DatetimeIndex(decisions.index)
     for position, (signal_date, decision) in enumerate(decisions.iterrows()):
+        asset = decision["selected_asset"]
         if daily_prices is None:
             loc = prices.index.get_indexer([signal_date])[0]
             if loc < 0 or loc + 1 >= len(prices.index):
@@ -51,8 +53,10 @@ def run_backtest(
             if position + 1 >= len(decision_dates):
                 continue
             next_signal_date = decision_dates[position + 1]
-            execution_candidates = execution_prices.index[execution_prices.index > signal_date]
-            exit_candidates = execution_prices.index[execution_prices.index > next_signal_date]
+            required_assets = (asset, benchmark_asset)
+            complete_days = execution_prices.loc[:, required_assets].notna().all(axis=1)
+            execution_candidates = execution_prices.index[(execution_prices.index > signal_date) & complete_days]
+            exit_candidates = execution_prices.index[(execution_prices.index > next_signal_date) & complete_days]
             if not len(execution_candidates) or not len(exit_candidates):
                 continue
             execution_date, holding_end = execution_candidates.min(), exit_candidates.min()
@@ -60,9 +64,8 @@ def run_backtest(
             continue
         if end is not None and holding_end > pd.Timestamp(end):
             continue
-        asset = decision["selected_asset"]
         asset_return = execution_prices.loc[holding_end, asset] / execution_prices.loc[execution_date, asset] - 1
-        spy_return = execution_prices.loc[holding_end, "SPY"] / execution_prices.loc[execution_date, "SPY"] - 1
+        spy_return = execution_prices.loc[holding_end, benchmark_asset] / execution_prices.loc[execution_date, benchmark_asset] - 1
         rows.append({**decision.to_dict(), "signal_date": signal_date, "execution_date": execution_date, "holding_end": holding_end, "holding_period_return": asset_return, "spy_return": spy_return})
     execution = pd.DataFrame(rows)
     if execution.empty:
@@ -123,6 +126,7 @@ def _run_weighted_backtest(
     start: pd.Timestamp | None,
     end: pd.Timestamp | None,
     daily_prices: pd.DataFrame | None,
+    benchmark_asset: str,
 ) -> BacktestResult:
     """Execute target-weight portfolios while preserving single-asset engine behavior.
 
@@ -137,6 +141,7 @@ def _run_weighted_backtest(
     rows: list[dict] = []
     decision_dates = pd.DatetimeIndex(decisions.index)
     for position, (signal_date, decision) in enumerate(decisions.iterrows()):
+        weights = _normalise_weights(decision["target_weights"])
         if daily_prices is None:
             loc = prices.index.get_indexer([signal_date])[0]
             if loc < 0 or loc + 1 >= len(prices.index):
@@ -146,8 +151,10 @@ def _run_weighted_backtest(
             if position + 1 >= len(decision_dates):
                 continue
             next_signal_date = decision_dates[position + 1]
-            execution_candidates = execution_prices.index[execution_prices.index > signal_date]
-            exit_candidates = execution_prices.index[execution_prices.index > next_signal_date]
+            required_assets = tuple(dict.fromkeys((*weights, benchmark_asset)))
+            complete_days = execution_prices.loc[:, required_assets].notna().all(axis=1)
+            execution_candidates = execution_prices.index[(execution_prices.index > signal_date) & complete_days]
+            exit_candidates = execution_prices.index[(execution_prices.index > next_signal_date) & complete_days]
             if not len(execution_candidates) or not len(exit_candidates):
                 continue
             execution_date, holding_end = execution_candidates.min(), exit_candidates.min()
@@ -155,10 +162,9 @@ def _run_weighted_backtest(
             continue
         if end is not None and holding_end > pd.Timestamp(end):
             continue
-        weights = _normalise_weights(decision["target_weights"])
         asset_returns = {asset: execution_prices.loc[holding_end, asset] / execution_prices.loc[execution_date, asset] - 1 for asset in weights}
         portfolio_return = sum(weights[asset] * asset_returns[asset] for asset in weights)
-        spy_return = execution_prices.loc[holding_end, "SPY"] / execution_prices.loc[execution_date, "SPY"] - 1
+        spy_return = execution_prices.loc[holding_end, benchmark_asset] / execution_prices.loc[execution_date, benchmark_asset] - 1
         rows.append({**decision.to_dict(), "signal_date": signal_date, "execution_date": execution_date, "holding_end": holding_end, "holding_period_return": portfolio_return, "asset_returns": asset_returns, "spy_return": spy_return})
     execution = pd.DataFrame(rows)
     if execution.empty:
