@@ -20,10 +20,9 @@ class HAASimple:
     def decisions(self, monthly_prices: pd.DataFrame) -> pd.DataFrame:
         """Make month-end decisions, leaving execution to the next holding period.
 
-        SPY and TIP are sufficient for a risk-on decision. In defensive mode,
-        select the best defensive asset with a valid momentum value. This
-        avoids discarding valid early IEF holdings merely because BIL started
-        trading later, without creating or proxying any missing ETF history.
+        Every canonical asset must have a valid 12-month score.  In particular,
+        the strategy does not create pre-inception BIL history or silently use
+        IEF as a substitute for unavailable BIL data.
         """
         missing = set(ASSETS) - set(monthly_prices.columns)
         if missing:
@@ -33,16 +32,14 @@ class HAASimple:
         rows: list[dict] = []
         previous: str | None = None
         for date, values in momenta.iterrows():
-            if pd.isna(values["SPY"]) or pd.isna(values["TIP"]):
+            if values.isna().any():
                 continue
             if values["SPY"] > 0 and values["TIP"] > 0:
                 regime, selected = "risk-on", "SPY"
             else:
-                defensive = values[["IEF", "BIL"]].dropna()
-                if defensive.empty:
-                    continue
                 regime = "risk-off"
-                selected = defensive.idxmax()
+                # Published rule says "higher"; make an exact tie deterministic.
+                selected = "IEF" if values["IEF"] >= values["BIL"] else "BIL"
             rows.append({
                 "signal_date": date,
                 **{f"{asset}_price": prices.loc[date, asset] for asset in ASSETS},
