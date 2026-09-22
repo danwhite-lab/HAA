@@ -111,9 +111,22 @@ def _clean_prices(prices: pd.DataFrame) -> pd.DataFrame:
     return result.apply(pd.to_numeric, errors="coerce")
 
 
-def to_month_end(daily_prices: pd.DataFrame) -> pd.DataFrame:
-    """Use the final available trading observation in each calendar month."""
-    return daily_prices.resample("ME").last()
+def to_month_end(daily_prices: pd.DataFrame, as_of: pd.Timestamp | None = None) -> pd.DataFrame:
+    """Return completed months, indexed by their actual final trading date.
+
+    The current calendar month is deliberately excluded.  This prevents a
+    partial month from being relabelled as its future calendar month-end.
+    """
+    prices = _clean_prices(daily_prices)
+    timestamp = pd.Timestamp.now(tz="UTC").tz_localize(None) if as_of is None else pd.Timestamp(as_of).tz_localize(None)
+    completed_month = timestamp.to_period("M") - 1
+    periods = prices.index.to_period("M")
+    completed = prices.loc[periods <= completed_month]
+    if completed.empty:
+        return completed
+    # ``tail(1)`` keeps the real last trading date rather than assigning a
+    # synthetic calendar-end label such as 2026-09-30 to 2026-09-22 prices.
+    return completed.groupby(completed.index.to_period("M"), group_keys=False).tail(1)
 
 
 def date_ranges(prices: pd.DataFrame) -> pd.DataFrame:
