@@ -24,32 +24,46 @@ def run_backtest(
     tax_rate: float = 0.25,
     start: pd.Timestamp | None = None,
     end: pd.Timestamp | None = None,
+    daily_prices: pd.DataFrame | None = None,
 ) -> BacktestResult:
     """Execute one allocation for the month following each signal.
 
-    Each decision at t uses prices through t. Its selected asset earns only the
-    t-to-next-month-end return. The last decision has no future holding period
-    and is excluded, preventing a same-date look-ahead trade.
+    Each decision is made after the final trading-day close of its month. When
+    daily prices are supplied, it enters at the next trading-day close and
+    exits at the next month's corresponding execution close. The last decision
+    has no future holding period and is excluded.
     """
     if "target_weights" in decisions.columns:
-        return _run_weighted_backtest(decisions, monthly_prices, initial_investment, transaction_cost, tax_enabled, tax_rate, start, end)
+        return _run_weighted_backtest(decisions, monthly_prices, initial_investment, transaction_cost, tax_enabled, tax_rate, start, end, daily_prices)
     if decisions.empty:
         raise ValueError("No valid signals: at least 13 complete month-end observations are required.")
     prices = monthly_prices.sort_index()
+    execution_prices = daily_prices.sort_index() if daily_prices is not None else prices
     rows = []
-    for signal_date, decision in decisions.iterrows():
-        loc = prices.index.get_indexer([signal_date])[0]
-        if loc < 0 or loc + 1 >= len(prices.index):
-            continue
-        holding_end = prices.index[loc + 1]
+    decision_dates = pd.DatetimeIndex(decisions.index)
+    for position, (signal_date, decision) in enumerate(decisions.iterrows()):
+        if daily_prices is None:
+            loc = prices.index.get_indexer([signal_date])[0]
+            if loc < 0 or loc + 1 >= len(prices.index):
+                continue
+            execution_date, holding_end = signal_date, prices.index[loc + 1]
+        else:
+            if position + 1 >= len(decision_dates):
+                continue
+            next_signal_date = decision_dates[position + 1]
+            execution_candidates = execution_prices.index[execution_prices.index > signal_date]
+            exit_candidates = execution_prices.index[execution_prices.index > next_signal_date]
+            if not len(execution_candidates) or not len(exit_candidates):
+                continue
+            execution_date, holding_end = execution_candidates.min(), exit_candidates.min()
         if start is not None and holding_end < pd.Timestamp(start):
             continue
         if end is not None and holding_end > pd.Timestamp(end):
             continue
         asset = decision["selected_asset"]
-        asset_return = prices.loc[holding_end, asset] / prices.loc[signal_date, asset] - 1
-        spy_return = prices.loc[holding_end, "SPY"] / prices.loc[signal_date, "SPY"] - 1
-        rows.append({**decision.to_dict(), "signal_date": signal_date, "holding_end": holding_end, "holding_period_return": asset_return, "spy_return": spy_return})
+        asset_return = execution_prices.loc[holding_end, asset] / execution_prices.loc[execution_date, asset] - 1
+        spy_return = execution_prices.loc[holding_end, "SPY"] / execution_prices.loc[execution_date, "SPY"] - 1
+        rows.append({**decision.to_dict(), "signal_date": signal_date, "execution_date": execution_date, "holding_end": holding_end, "holding_period_return": asset_return, "spy_return": spy_return})
     execution = pd.DataFrame(rows)
     if execution.empty:
         raise ValueError("No complete holding periods within the selected date range.")
@@ -71,7 +85,7 @@ def run_backtest(
         if tax_enabled and changing:
             event = tax_state.sell(after_value)
             after_value -= event["tax_paid"]
-            tax_events.append({"date": row.signal_date, "sold_asset": previous_asset, **event})
+            tax_events.append({"date": row.execution_date, "sold_asset": previous_asset, **event})
         if tax_enabled and entering:
             after_value *= 1 - transaction_cost
             tax_state.buy(asset, after_value)
@@ -108,6 +122,7 @@ def _run_weighted_backtest(
     tax_rate: float,
     start: pd.Timestamp | None,
     end: pd.Timestamp | None,
+    daily_prices: pd.DataFrame | None,
 ) -> BacktestResult:
     """Execute target-weight portfolios while preserving single-asset engine behavior.
 
@@ -118,21 +133,33 @@ def _run_weighted_backtest(
     if decisions.empty:
         raise ValueError("No valid signals: at least 13 complete month-end observations are required.")
     prices = monthly_prices.sort_index()
+    execution_prices = daily_prices.sort_index() if daily_prices is not None else prices
     rows: list[dict] = []
-    for signal_date, decision in decisions.iterrows():
-        loc = prices.index.get_indexer([signal_date])[0]
-        if loc < 0 or loc + 1 >= len(prices.index):
-            continue
-        holding_end = prices.index[loc + 1]
+    decision_dates = pd.DatetimeIndex(decisions.index)
+    for position, (signal_date, decision) in enumerate(decisions.iterrows()):
+        if daily_prices is None:
+            loc = prices.index.get_indexer([signal_date])[0]
+            if loc < 0 or loc + 1 >= len(prices.index):
+                continue
+            execution_date, holding_end = signal_date, prices.index[loc + 1]
+        else:
+            if position + 1 >= len(decision_dates):
+                continue
+            next_signal_date = decision_dates[position + 1]
+            execution_candidates = execution_prices.index[execution_prices.index > signal_date]
+            exit_candidates = execution_prices.index[execution_prices.index > next_signal_date]
+            if not len(execution_candidates) or not len(exit_candidates):
+                continue
+            execution_date, holding_end = execution_candidates.min(), exit_candidates.min()
         if start is not None and holding_end < pd.Timestamp(start):
             continue
         if end is not None and holding_end > pd.Timestamp(end):
             continue
         weights = _normalise_weights(decision["target_weights"])
-        asset_returns = {asset: prices.loc[holding_end, asset] / prices.loc[signal_date, asset] - 1 for asset in weights}
+        asset_returns = {asset: execution_prices.loc[holding_end, asset] / execution_prices.loc[execution_date, asset] - 1 for asset in weights}
         portfolio_return = sum(weights[asset] * asset_returns[asset] for asset in weights)
-        spy_return = prices.loc[holding_end, "SPY"] / prices.loc[signal_date, "SPY"] - 1
-        rows.append({**decision.to_dict(), "signal_date": signal_date, "holding_end": holding_end, "holding_period_return": portfolio_return, "asset_returns": asset_returns, "spy_return": spy_return})
+        spy_return = execution_prices.loc[holding_end, "SPY"] / execution_prices.loc[execution_date, "SPY"] - 1
+        rows.append({**decision.to_dict(), "signal_date": signal_date, "execution_date": execution_date, "holding_end": holding_end, "holding_period_return": portfolio_return, "asset_returns": asset_returns, "spy_return": spy_return})
     execution = pd.DataFrame(rows)
     if execution.empty:
         raise ValueError("No complete holding periods within the selected date range.")
@@ -167,7 +194,7 @@ def _run_weighted_backtest(
                     basis = tax_state.cost_bases.get(asset, 0.0)
                     event = tax_state.sell(sale, asset=asset, cost_basis_sold=basis * sale / current if current else 0.0)
                     taxes += event["tax_paid"]
-                    tax_events.append({"date": row.signal_date, "sold_asset": asset, "proceeds": sale, **event})
+                    tax_events.append({"date": row.execution_date, "sold_asset": asset, "proceeds": sale, **event})
             trade_cost = current_total * transaction_cost * turnover
             after_value = max(0.0, current_total - taxes - trade_cost)
             target_positions = {asset: after_value * weight for asset, weight in weights.items()}
