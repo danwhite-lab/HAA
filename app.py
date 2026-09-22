@@ -8,7 +8,7 @@ import plotly.express as px
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-from haa.constants import ASSETS, DEFAULT_TAX_RATE
+from haa.constants import ASSETS, DEFAULT_TAX_RATE, ISRAEL_SIMPLE_ASSETS
 # Comparison logic stays outside the UI so it can enforce a shared period.
 from haa.comparison import ModelInput, compare_models
 from haa.data import combine_replacements, common_monthly_period, date_ranges, default_ticker_map, download_yahoo_prices, parse_ticker_map, read_uploaded_csv, to_month_end, upload_asset_from_filename
@@ -16,6 +16,7 @@ from haa.engine import run_backtest
 from haa.metrics import annual_returns, performance_metrics
 from haa.signals import first_trading_day_after, latest_actionable_signal
 from haa.strategies import HAAClassicLeveragedNoQQQ, HAAClassicNoQQQ, HAASimple, HAASimpleIsrael, HAASimpleLeveraged2x
+from haa.tase_data import TASE_ISRAEL_ASSET_IDS, TaseDataError, download_tase_israel_prices
 
 MODEL_OPTIONS = {
     "HAA-Simple": HAASimple,
@@ -36,6 +37,8 @@ MODEL_RULES = {
 **Risk:** high-drawdown leveraged satellite, not a core holding. A monthly signal cannot prevent losses from a fast intramonth crash.""",
 }
 ALL_MODEL_ASSETS = tuple(dict.fromkeys(asset for model_class in MODEL_OPTIONS.values() for asset in getattr(model_class, "data_assets", ASSETS)))
+TASE_ASSETS = tuple(asset for asset in ISRAEL_SIMPLE_ASSETS if asset != "TIP")
+YAHOO_ASSETS = tuple(asset for asset in ALL_MODEL_ASSETS if asset not in TASE_ASSETS)
 
 st.set_page_config(page_title="HAA Backtest", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
@@ -58,7 +61,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-DEFAULT_TICKERS = "\n".join(f"{role}={ticker}" for role, ticker in default_ticker_map(ALL_MODEL_ASSETS).items())
+DEFAULT_TICKERS = "\n".join(f"{role}={ticker}" for role, ticker in default_ticker_map(YAHOO_ASSETS).items())
 DEFAULT_MODEL = "HAA-Simple"
 
 
@@ -66,8 +69,11 @@ def append_missing_default_tickers(text: str) -> str:
     """Retain custom sources while migrating saved sessions to new model assets."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     roles = {line.split("=", 1)[0].strip().upper() for line in lines if "=" in line}
-    defaults = default_ticker_map(ALL_MODEL_ASSETS)
-    lines.extend(f"{asset}={defaults[asset]}" for asset in ALL_MODEL_ASSETS if asset not in roles)
+    # Older sessions included Yahoo placeholders for Israeli assets.  Those
+    # values must not quietly override the dedicated TASE/Maya adapter.
+    lines = [line for line in lines if line.split("=", 1)[0].strip().upper() not in TASE_ASSETS]
+    defaults = default_ticker_map(YAHOO_ASSETS)
+    lines.extend(f"{asset}={defaults[asset]}" for asset in YAHOO_ASSETS if asset not in roles)
     return "\n".join(lines)
 
 
@@ -109,7 +115,7 @@ if page == "Backtest":
     with st.sidebar:
         st.header("Backtest configuration")
         model_name = st.selectbox("Backtest model", tuple(MODEL_OPTIONS), key="model_name")
-        ticker_text = st.text_area("Yahoo Finance ticker sources", value=ticker_text, help="One asset role per line. All available model assets are downloaded so selected models can be compared on the same source data.")
+        ticker_text = st.text_area("Yahoo Finance ticker sources", value=ticker_text, help="One asset role per line. Israeli roles CSPX_IL, IEF_IL, and AYALON_KASPIT always use public TASE/Maya data via tasekit; TIP and all other roles use Yahoo Finance.")
         uploads = st.file_uploader("Upload replacement CSV files", type="csv", accept_multiple_files=True, help=f"Upload one or more files named with one valid asset: {', '.join(ALL_MODEL_ASSETS)}.")
         initial = st.number_input("Initial investment", min_value=1.0, value=initial, step=1_000.0)
         cost_pct = st.number_input("Transaction cost per entry/change (%)", min_value=0.0, max_value=10.0, value=cost_pct * 100, step=0.01) / 100
@@ -125,7 +131,7 @@ benchmark_asset = getattr(strategy, "benchmark_asset", "SPY")
 benchmark_label = f"{benchmark_asset} buy-and-hold"
 
 try:
-    ticker_map = parse_ticker_map(ticker_text, ALL_MODEL_ASSETS)
+    ticker_map = parse_ticker_map(ticker_text, YAHOO_ASSETS)
 except (ValueError, TypeError) as exc:
     st.sidebar.error(str(exc))
     st.stop()
@@ -134,11 +140,30 @@ except (ValueError, TypeError) as exc:
 def load_data(source_items: tuple[tuple[str, str], ...]):
     return download_yahoo_prices(dict(source_items))
 
+
+@st.cache_data(ttl=6 * 60 * 60, show_spinner="Downloading public TASE/Maya price history...")
+def load_tase_data():
+    """Cache successful public-source requests and avoid repeated TASE traffic."""
+    return download_tase_israel_prices()
+
 try:
     downloaded = load_data(tuple(ticker_map.items()))
 except Exception as exc:
     st.error(f"Yahoo Finance download failed: {exc}")
     st.stop()
+
+tase_warning: str | None = None
+try:
+    tase_prices, tase_metadata = load_tase_data()
+except TaseDataError as exc:
+    # Do not take down US models if the public TASE/Maya site is unavailable.
+    # CSV uploads remain a deliberate, visible fallback for the Israel model.
+    tase_warning = str(exc)
+    tase_prices = pd.DataFrame(columns=TASE_ASSETS, dtype=float)
+    tase_metadata = pd.DataFrame(
+        {"source": "TASE/Maya via tasekit (unavailable)", "identifier": [TASE_ISRAEL_ASSET_IDS[asset] for asset in TASE_ASSETS], "price_field": "Unavailable"},
+        index=pd.Index(TASE_ASSETS, name="asset"),
+    )
 
 replacements = st.session_state["uploaded_replacements"].copy()
 if page == "Backtest":
@@ -152,7 +177,19 @@ if page == "Backtest":
         except ValueError as exc:
             st.sidebar.error(str(exc))
     st.session_state["uploaded_replacements"] = replacements
-all_prices = combine_replacements(downloaded, replacements, ALL_MODEL_ASSETS)
+downloaded_all = downloaded.join(tase_prices, how="outer")
+all_prices = combine_replacements(downloaded_all, replacements, ALL_MODEL_ASSETS)
+source_metadata = pd.DataFrame(
+    {
+        "source": "Yahoo Finance",
+        "identifier": [ticker_map[asset] for asset in YAHOO_ASSETS],
+        "price_field": "Adj Close (Close fallback)",
+    },
+    index=pd.Index(YAHOO_ASSETS, name="asset"),
+)
+source_metadata = pd.concat([source_metadata, tase_metadata]).reindex(ALL_MODEL_ASSETS)
+for asset in replacements:
+    source_metadata.loc[asset] = {"source": "User CSV replacement", "identifier": asset, "price_field": "Adj Close or Close"}
 prices = all_prices.loc[:, data_assets]
 monthly = to_month_end(prices)
 all_monthly = to_month_end(all_prices)
@@ -160,7 +197,10 @@ ranges = date_ranges(prices)
 common_start, common_end = common_monthly_period(monthly)
 
 if common_start is None:
-    st.error("The selected model assets have no common month-end observations. Check the Yahoo ticker mappings or upload compatible CSV histories.")
+    if isinstance(strategy, HAASimpleIsrael) and tase_warning:
+        st.error(f"HAA-Simple Israel has no common month-end observations because its public TASE/Maya data source is unavailable. {tase_warning}")
+    else:
+        st.error("The selected model assets have no common month-end observations. Check the data sources or upload compatible CSV histories.")
     st.stop()
 start = st.session_state.get("start", common_start.date())
 execution_end_limit = prices.index.max().date()
@@ -408,8 +448,11 @@ if page == "Signals":
         st.download_button("Download signal history CSV", history.to_csv().encode("utf-8"), f"{signal_strategy.name.lower().replace(' ', '_').replace('(', '').replace(')', '')}_signal_history.csv", "text/csv")
     with st.expander("Data status"):
         st.caption("This signal uses completed month-end data only. Backtest settings do not affect it.")
+        if isinstance(signal_strategy, HAASimpleIsrael) and tase_warning:
+            st.warning(f"Public TASE/Maya retrieval issue: {tase_warning}")
+        st.dataframe(source_metadata.loc[signal_data_assets], use_container_width=True)
         raw_ranges = date_ranges(signal_prices)
-        st.dataframe(raw_ranges[["last_available"]], use_container_width=True)
+        st.dataframe(raw_ranges, use_container_width=True)
         st.caption(f"Latest eligible completed month: {signal_status.completed_through.date()}. A partial current month is never presented as a final signal.")
     st.caption("Rules-based informational signal only; not investment advice. You are responsible for any trading decision and execution.")
 
@@ -422,10 +465,14 @@ if page == "Rules":
 
     st.markdown("""**13612U:** `(1-month return + 3-month return + 6-month return + 12-month return) / 4`. Each return is `price at signal date / price at its historical month-end - 1`. This implementation therefore requires 12 earlier observations of each asset it actually needs and uses no later prices.
 
-**Data:** Enter an `ASSET=YAHOO_TICKER` mapping in the sidebar to download Yahoo Finance data automatically. Leveraged models additionally require their mapped holding tickers (such as SSO, UST, UWM, UBT, EFO, URE, and EET). Uploaded CSV data replaces an asset’s entire history; use one uploader and name files with their target role, e.g. `SSO.csv`. `Adj Close` is used when Yahoo supplies it; `Close` is the visible fallback. No missing ETF history is fabricated.
+**Data:** TIP and all non-Israel assets use Yahoo Finance. HAA-Simple Israel retrieves CSPX_IL (1159250), IEF_IL (1159268), and AYALON_KASPIT (5136866) from public TASE/Maya endpoints through tasekit; the ETF adapter uses adjusted close when available, then published NAV, then end-of-day close, while the mutual fund uses its published Maya redemption price. Public endpoints may change or be blocked, so this source is for personal research and CSV replacement remains available. Enter `ASSET=YAHOO_TICKER` mappings only for Yahoo-sourced roles in the sidebar. Uploaded CSV data replaces an asset’s entire history; use one uploader and name files with their target role, e.g. `SSO.csv`. No missing ETF or fund history is fabricated.
 
 **Tax:** applies only when an existing position is sold due to an allocation change. It tracks cost basis and loss carryforward, never taxes the final unrealized position, and is independent of the strategy module.""")
     st.write(f"First valid signal date: **{first_signal.date()}**")
+    st.subheader("Data sources and coverage")
+    if isinstance(strategy, HAASimpleIsrael) and tase_warning:
+        st.warning(f"Public TASE/Maya retrieval issue: {tase_warning}")
+    st.dataframe(source_metadata.loc[data_assets].join(date_ranges(prices)), use_container_width=True)
     missing = monthly[monthly.isna().any(axis=1)]
     st.write(f"Months with at least one missing canonical price: **{len(missing)}**")
     audit_momentum_assets = getattr(strategy, "signal_assets", data_assets)
