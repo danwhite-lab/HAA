@@ -393,12 +393,16 @@ if page == "Signals":
     history_columns = ["regime", "selected_asset", "previous_asset", "trade"]
     if "target_weights" in signal_decisions:
         history_columns.insert(2, "target_weights")
-    history = signal_decisions.loc[:, history_columns].copy()
-    if "target_weights" in history:
-        history["target_weights"] = history["target_weights"].map(lambda weights: ", ".join(f"{asset} {weight:.0%}" for asset, weight in weights.items()))
-    history["effective_start"] = [first_trading_day_after(signal_prices, date, (history.loc[date, "selected_asset"], getattr(signal_strategy, "benchmark_asset", "SPY"))) for date in history.index]
-    history.index = pd.to_datetime(history.index).strftime("%Y-%m-%d")
-    history = history.rename_axis("signal_date")
+    if signal_decisions.empty:
+        history = pd.DataFrame(columns=[*history_columns, "effective_start"])
+        history.index.name = "signal_date"
+    else:
+        history = signal_decisions.loc[:, history_columns].copy()
+        if "target_weights" in history:
+            history["target_weights"] = history["target_weights"].map(lambda weights: ", ".join(f"{asset} {weight:.0%}" for asset, weight in weights.items()))
+        history["effective_start"] = [first_trading_day_after(signal_prices, date, (history.loc[date, "selected_asset"], getattr(signal_strategy, "benchmark_asset", "SPY"))) for date in history.index]
+        history.index = pd.to_datetime(history.index).strftime("%Y-%m-%d")
+        history = history.rename_axis("signal_date")
     with st.expander("Signal history"):
         st.dataframe(history.sort_index(ascending=False), use_container_width=True)
         st.download_button("Download signal history CSV", history.to_csv().encode("utf-8"), f"{signal_strategy.name.lower().replace(' ', '_').replace('(', '').replace(')', '')}_signal_history.csv", "text/csv")
