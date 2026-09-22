@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from haa.data import parse_ticker_map, upload_asset_from_filename
+from haa.data import parse_ticker_map, to_month_end, upload_asset_from_filename
 from haa.momentum import momentum_13612u
 
 
@@ -27,3 +27,9 @@ def pytest_approx(value):
 def test_yahoo_ticker_mapping_and_single_upload_file_names_are_explicit():
     assert parse_ticker_map("SPY=VOO\nTIP=TIP\nIEF=IEF\nBIL=BIL")["SPY"] == "VOO"
     assert upload_asset_from_filename("TIP_validation.csv") == "TIP"
+
+
+def test_monthly_data_uses_actual_last_trading_date_and_excludes_partial_month():
+    daily = pd.DataFrame({"SPY": [100.0, 101.0, 102.0]}, index=pd.to_datetime(["2026-08-31", "2026-09-01", "2026-09-22"]))
+    monthly = to_month_end(daily, as_of=pd.Timestamp("2026-09-22"))
+    assert monthly.index.equals(pd.DatetimeIndex([pd.Timestamp("2026-08-31")]))
