@@ -22,6 +22,11 @@ CLASSIC_LEVERAGED_SUBSTITUTIONS = {
 }
 CLASSIC_LEVERAGED_HOLDINGS = ("UST", "SSO", "UWM", "PDBC", "UBT", "EFO", "URE", "EET", "BIL")
 CLASSIC_LEVERAGED_DATA_ASSETS = tuple(dict.fromkeys((*CLASSIC_DATA_ASSETS, *CLASSIC_LEVERAGED_HOLDINGS)))
+# Published Keller & Keuning HAA-4: IEF is deliberately shared by the
+# offensive and defensive universes.  The data tuple is de-duplicated.
+HAA4_OFFENSIVE_ASSETS = ("SPY", "VEA", "VNQ", "IEF")
+HAA4_DEFENSIVE_ASSETS = ("IEF", "BIL")
+HAA4_DATA_ASSETS = ("TIP", "BIL", "SPY", "VEA", "VNQ", "IEF")
 STRATEGY_NAME = "HAA-Simple"
 MOMENTUM_LOOKBACKS = (1, 3, 6, 12)
 DEFAULT_TAX_RATE = 0.25
