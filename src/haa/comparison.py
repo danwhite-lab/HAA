@@ -17,6 +17,7 @@ class ModelInput:
     decisions: pd.DataFrame
     monthly_prices: pd.DataFrame
     daily_prices: pd.DataFrame | None = None
+    benchmark_asset: str = "SPY"
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,7 @@ def compare_models(
             start,
             requested_end,
             daily_prices=model.daily_prices,
+            benchmark_asset=model.benchmark_asset,
         )
         preliminary[name] = result
         availability.append({
@@ -87,6 +89,7 @@ def compare_models(
             common.min(),
             common.max(),
             daily_prices=model.daily_prices,
+            benchmark_asset=model.benchmark_asset,
         )
     final_common = None
     for result in rebased.values():
