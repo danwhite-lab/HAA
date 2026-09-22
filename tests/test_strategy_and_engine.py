@@ -44,13 +44,23 @@ def test_no_allocation_change_when_asset_is_unchanged():
     assert result.monthly["allocation_change"].sum() == 0
 
 
-def test_early_decisions_do_not_wait_for_bil_history():
+def test_decisions_require_bil_to_have_a_real_12_month_history():
     index = pd.date_range("2006-04-30", periods=14, freq="ME")
     prices = pd.DataFrame({"SPY": range(100, 114), "TIP": range(100, 114), "IEF": range(100, 114), "BIL": [float("nan")] * 13 + [100]}, index=index, dtype=float)
     decisions = HAASimple().decisions(prices)
-    assert decisions.index.min() == index[12]
-    assert decisions.iloc[0]["selected_asset"] == "SPY"
+    assert decisions.empty
 
+    prices["BIL"] = range(100, 114)
     prices.loc[index[12], "SPY"] = 50
     decisions = HAASimple().decisions(prices)
     assert decisions.iloc[0]["selected_asset"] == "IEF"
+
+
+def test_daily_execution_is_after_signal_and_ends_at_next_execution_date():
+    monthly = pd.DataFrame({"SPY": [100, 101], "TIP": [100, 101], "IEF": [100, 101], "BIL": [100, 101]}, index=pd.to_datetime(["2021-01-29", "2021-02-26"]))
+    daily = pd.DataFrame({"SPY": [100, 110, 121, 130], "TIP": [100, 110, 121, 130], "IEF": [100, 110, 121, 130], "BIL": [100, 110, 121, 130]}, index=pd.to_datetime(["2021-01-29", "2021-02-01", "2021-02-26", "2021-03-01"]))
+    decisions = pd.DataFrame({"selected_asset": ["SPY", "SPY"]}, index=pd.to_datetime(["2021-01-29", "2021-02-26"]))
+    result = run_backtest(decisions, monthly, 100, daily_prices=daily)
+    assert result.audit.iloc[0]["execution_date"] == pd.Timestamp("2021-02-01")
+    assert result.monthly.index[0] == pd.Timestamp("2021-03-01")
+    assert result.monthly.iloc[0]["holding_period_return"] == pytest.approx(130 / 110 - 1)
