@@ -158,11 +158,12 @@ if common_start is None:
     st.error("The selected model assets have no common month-end observations. Check the Yahoo ticker mappings or upload compatible CSV histories.")
     st.stop()
 start = st.session_state.get("start", common_start.date())
-end = st.session_state.get("end", common_end.date())
+execution_end_limit = prices.index.max().date()
+end = st.session_state.get("end", execution_end_limit)
 # A model can have a shorter history than the previously configured model.
 # Keep saved backtest dates valid when returning to its configuration page.
 start = min(max(start, common_start.date()), common_end.date())
-end = min(max(end, common_start.date()), common_end.date())
+end = min(max(end, common_start.date()), execution_end_limit)
 if start > end:
     start = common_start.date()
 if page == "Backtest":
@@ -173,7 +174,7 @@ if page == "Backtest":
             st.dataframe(ranges, use_container_width=True, hide_index=True)
             st.caption(f"Actual common monthly data period: {common_start.date()} through {common_end.date()}.")
         start = st.date_input("Backtest start (holding-period end)", value=start, min_value=common_start.date(), max_value=common_end.date())
-        end = st.date_input("Backtest end (holding-period end)", value=end, min_value=common_start.date(), max_value=common_end.date())
+        end = st.date_input("Backtest end (holding-period execution date)", value=end, min_value=common_start.date(), max_value=execution_end_limit)
     st.session_state.update({"start": start, "end": end})
 
 decisions = strategy.decisions(monthly)
@@ -182,7 +183,7 @@ if decisions.empty:
     st.stop()
 first_signal = decisions.index.min()
 try:
-    result = run_backtest(decisions, monthly, initial, cost_pct, tax_enabled, tax_rate, pd.Timestamp(start), pd.Timestamp(end))
+    result = run_backtest(decisions, monthly, initial, cost_pct, tax_enabled, tax_rate, pd.Timestamp(start), pd.Timestamp(end), daily_prices=prices)
 except ValueError as exc:
     st.error(str(exc))
     st.stop()
@@ -251,7 +252,7 @@ if page == "Compare Models":
                 selected_strategy = MODEL_OPTIONS[selected_name]()
                 selected_assets = getattr(selected_strategy, "data_assets", ASSETS)
                 selected_monthly = all_monthly.loc[:, selected_assets]
-                comparison_inputs[selected_name] = ModelInput(selected_name, selected_strategy.decisions(selected_monthly), selected_monthly)
+                comparison_inputs[selected_name] = ModelInput(selected_name, selected_strategy.decisions(selected_monthly), selected_monthly, all_prices.loc[:, selected_assets])
             model_comparison = compare_models(
                 comparison_inputs,
                 initial,
@@ -416,7 +417,7 @@ if page == "Rules":
         audit_columns += [f"{asset}_rank" for asset in strategy.offensive_assets] + ["selected_assets", "target_weights", "previous_weights"]
         if isinstance(strategy, HAAClassicLeveragedNoQQQ):
             audit_columns += ["selected_underlying_assets", "mapped_holding_assets"]
-    audit_columns += ["regime", "selected_asset", "previous_asset", "trade", "holding_end", "holding_period_return"]
+    audit_columns += ["regime", "selected_asset", "previous_asset", "trade", "execution_date", "holding_end", "holding_period_return"]
     audit = result.audit[audit_columns]
     with st.expander("Monthly audit table"):
         st.dataframe(audit.style.format("{:.6f}", subset=[c for c in audit.columns if c.endswith("13612u") or c.endswith("return")]), use_container_width=True)
