@@ -121,7 +121,7 @@ data_assets = getattr(strategy, "data_assets", ASSETS)
 
 try:
     ticker_map = parse_ticker_map(ticker_text, ALL_MODEL_ASSETS)
-except ValueError as exc:
+except (ValueError, TypeError) as exc:
     st.sidebar.error(str(exc))
     st.stop()
 
