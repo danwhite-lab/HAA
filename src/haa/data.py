@@ -10,11 +10,16 @@ import pandas as pd
 
 from .constants import ASSETS
 
-DEFAULT_TICKER_MAP = {asset: asset for asset in ASSETS}
+DEFAULT_TICKER_MAP = {
+    **{asset: asset for asset in ASSETS},
+    "CSPX_IL": "1159250.TA",
+    "IEF_IL": "1159268.TA",
+    "AYALON_KASPIT": "5136866.TA",
+}
 
 
 def default_ticker_map(assets: Iterable[str]) -> dict[str, str]:
-    return {asset: asset for asset in assets}
+    return {asset: DEFAULT_TICKER_MAP.get(asset, asset) for asset in assets}
 
 
 def _normalise_frame(frame: pd.DataFrame, asset: str) -> pd.Series:
@@ -121,7 +126,10 @@ def to_month_end(daily_prices: pd.DataFrame, as_of: pd.Timestamp | None = None) 
     timestamp = pd.Timestamp.now(tz="UTC").tz_localize(None) if as_of is None else pd.Timestamp(as_of).tz_localize(None)
     completed_month = timestamp.to_period("M") - 1
     periods = prices.index.to_period("M")
-    completed = prices.loc[periods <= completed_month]
+    # A mixed U.S./TASE model is final only on a date with prices for every
+    # series it needs. This avoids treating one exchange's holiday as a final
+    # signal for another exchange.
+    completed = prices.loc[(periods <= completed_month) & prices.notna().all(axis=1)]
     if completed.empty:
         return completed
     # ``tail(1)`` keeps the real last trading date rather than assigning a
