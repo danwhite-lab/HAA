@@ -52,3 +52,5 @@ def test_comparison_tax_states_are_independent():
     models = {name: ModelInput(name, switch, asset_prices) for name in ("a", "b")}
     comparison = compare_models(models, 100, tax_enabled=True, completed_through=index[-1])
     assert comparison.results["a"].monthly["after_tax_value"].equals(comparison.results["b"].monthly["after_tax_value"])
+    assert comparison.results["a"].monthly["after_tax_value"].iloc[-1] < comparison.results["a"].monthly["pre_tax_value"].iloc[-1]
+    assert not comparison.results["a"].tax_events.empty
