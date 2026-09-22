@@ -54,7 +54,10 @@ def latest_actionable_signal(
     return SignalStatus(decisions.loc[completed_through].copy(), None, completed_through)
 
 
-def first_trading_day_after(daily_prices: pd.DataFrame, signal_date: pd.Timestamp) -> pd.Timestamp | None:
-    """Find the first available market observation after a signal month-end."""
-    future = daily_prices.index[daily_prices.index > pd.Timestamp(signal_date)]
+def first_trading_day_after(daily_prices: pd.DataFrame, signal_date: pd.Timestamp, required_assets: Iterable[str] | None = None) -> pd.Timestamp | None:
+    """Find the first post-signal date with usable prices for required assets."""
+    eligible = pd.Series(True, index=daily_prices.index)
+    if required_assets:
+        eligible = daily_prices.loc[:, list(required_assets)].notna().all(axis=1)
+    future = daily_prices.index[(daily_prices.index > pd.Timestamp(signal_date)) & eligible]
     return future.min() if len(future) else None
