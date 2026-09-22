@@ -7,16 +7,16 @@ from typing import Mapping
 import pandas as pd
 
 from .engine import BacktestResult, run_backtest
-from .signals import last_completed_month_end
 
 
 @dataclass(frozen=True)
 class ModelInput:
-    """An already-instantiated strategy and its model-specific monthly prices."""
+    """An already-instantiated strategy and its model-specific source prices."""
 
     name: str
     decisions: pd.DataFrame
     monthly_prices: pd.DataFrame
+    daily_prices: pd.DataFrame | None = None
 
 
 @dataclass(frozen=True)
@@ -44,8 +44,9 @@ def compare_models(
     """
     if len(models) < 2:
         raise ValueError("Select at least two models to compare.")
-    complete_end = pd.Timestamp(completed_through) if completed_through is not None else last_completed_month_end()
-    requested_end = min(pd.Timestamp(end), complete_end) if end is not None else complete_end
+    # Strategies already contain completed-month signals only; execution dates
+    # can legitimately fall in the next calendar month.
+    requested_end = pd.Timestamp(end) if end is not None else completed_through
     preliminary: dict[str, BacktestResult] = {}
     availability: list[dict[str, object]] = []
     for name, model in models.items():
@@ -58,6 +59,7 @@ def compare_models(
             tax_rate,
             start,
             requested_end,
+            daily_prices=model.daily_prices,
         )
         preliminary[name] = result
         availability.append({
@@ -84,6 +86,7 @@ def compare_models(
             tax_rate,
             common.min(),
             common.max(),
+            daily_prices=model.daily_prices,
         )
     final_common = None
     for result in rebased.values():
