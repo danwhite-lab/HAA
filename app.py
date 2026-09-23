@@ -512,14 +512,32 @@ if page == "Signals":
             st.write(f"SPY and TIP 13612U momentum are both strictly positive, so the model selects {holding}.")
         else:
             st.write(f"At least one of SPY or TIP 13612U momentum is not positive, so the model selects the higher-momentum defensive asset: {signal['selected_asset']}.")
-        price_columns = [f"{asset}_price" for asset in signal_momentum_assets if f"{asset}_price" in signal.index]
-        momentum_columns = [f"{asset}_13612u" for asset in signal_momentum_assets if f"{asset}_13612u" in signal.index]
-        inputs = pd.DataFrame({
-            "month-end price": {column.removesuffix("_price"): signal[column] for column in price_columns},
-            "13612U momentum": {column.removesuffix("_13612u"): signal[column] for column in momentum_columns},
-        }).T
-        st.dataframe(inputs.style.format("{:.6f}"), use_container_width=True)
-        st.caption("13612U = (1-month return + 3-month return + 6-month return + 12-month return) / 4. The leveraged model uses SPY and TIP—not SSO momentum—to determine its gate.")
+        if isinstance(signal_strategy, InflationCompassSteady):
+            compass_inputs = pd.DataFrame([{
+                "SPY close": signal["SPY_price"],
+                "SPY 200-day SMA": signal["SPY_200d_sma"],
+                "Growth up": signal["growth_up"],
+                "T5YIE date (lagged)": signal["t5yie_lag_date"],
+                "T5YIE (lagged)": signal["t5yie_lagged"],
+                "T5YIE 80-day date": signal["t5yie_80d_date"],
+                "T5YIE 80-day value": signal["t5yie_80d"],
+                "Breakeven momentum": signal["breakeven_momentum"],
+                "Inflation indicator": signal["inflation_indicator"],
+                "80-day indicator slope": signal["indicator_80d_slope"],
+                "Asset momentum": signal["asset_momentum"],
+                "Inflation on": signal["inflation_on"],
+            }])
+            st.dataframe(compass_inputs.style.format({"SPY close": "{:.4f}", "SPY 200-day SMA": "{:.4f}", "T5YIE (lagged)": "{:.4f}", "T5YIE 80-day value": "{:.4f}", "Inflation indicator": "{:.6f}", "80-day indicator slope": "{:.8f}"}), use_container_width=True, hide_index=True)
+            st.caption("T5YIE is read from the prior available trading-day observation. Both confirmation windows use 80 valid trading observations.")
+        else:
+            price_columns = [f"{asset}_price" for asset in signal_momentum_assets if f"{asset}_price" in signal.index]
+            momentum_columns = [f"{asset}_13612u" for asset in signal_momentum_assets if f"{asset}_13612u" in signal.index]
+            inputs = pd.DataFrame({
+                "month-end price": {column.removesuffix("_price"): signal[column] for column in price_columns},
+                "13612U momentum": {column.removesuffix("_13612u"): signal[column] for column in momentum_columns},
+            }).T
+            st.dataframe(inputs.style.format("{:.6f}"), use_container_width=True)
+            st.caption("13612U = (1-month return + 3-month return + 6-month return + 12-month return) / 4. The leveraged model uses SPY and TIP—not SSO momentum—to determine its gate.")
     history_columns = ["regime", "selected_asset", "previous_asset", "trade"]
     if "target_weights" in signal_decisions:
         history_columns.insert(2, "target_weights")
