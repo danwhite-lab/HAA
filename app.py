@@ -15,12 +15,13 @@ from haa.data import combine_replacements, common_monthly_period, date_ranges, d
 from haa.engine import run_backtest
 from haa.metrics import annual_returns, performance_metrics
 from haa.signals import first_trading_day_after, latest_actionable_signal
-from haa.strategies import HAA4, HAAClassicLeveragedNoQQQ, HAAClassicNoQQQ, HAASimple, HAASimpleIsrael, HAASimpleLeveraged2x
+from haa.strategies import HAA4, HAA4Leveraged2x, HAAClassicLeveragedNoQQQ, HAAClassicNoQQQ, HAASimple, HAASimpleIsrael, HAASimpleLeveraged2x
 from haa.tase_data import TASE_ISRAEL_ASSET_IDS, TaseDataError, download_tase_israel_prices
 
 MODEL_OPTIONS = {
     "HAA-Simple": HAASimple,
     "HAA 4": HAA4,
+    "HAA 4 Leveraged 2x": HAA4Leveraged2x,
     "HAA-Simple Leveraged 2x (SSO)": HAASimpleLeveraged2x,
     "HAA-Simple Israel": HAASimpleIsrael,
     "HAA Classic (No QQQ)": HAAClassicNoQQQ,
@@ -29,6 +30,9 @@ MODEL_OPTIONS = {
 MODEL_RULES = {
     "HAA-Simple": """**HAA-Simple:** At each month-end, calculate equal-weighted 13612U momentum for SPY and TIP. If both are strictly positive, hold 100% SPY. Otherwise, compare IEF and BIL 13612U momentum and hold 100% of the higher-momentum asset. The decision earns the following month's return only.""",
     "HAA 4": """**HAA 4:** TIP is the sole canary. If TIP's equal-weighted 13612U momentum is zero or negative, hold 100% of the higher-momentum asset from IEF and BIL. If TIP is strictly positive, rank SPY, VEA, VNQ, and IEF by 13612U and select the top two at 50% each. Then replace each selected asset whose own momentum is zero or negative with the higher-momentum IEF/BIL defensive asset. This can produce a mixed offensive/defensive allocation. IEF is eligible in both universes.""",
+    "HAA 4 Leveraged 2x": """**HAA 4 Leveraged 2x:** HAA-4's TIP gate, Top-2 ranking, and sleeve-level defensive replacement all use unleveraged TIP, SPY, VEA, VNQ, IEF, and BIL momentum. Only after that decision are holdings mapped: SPY→SSO, VEA→EFO, VNQ→URE, IEF→UST, and BIL→BIL. If TIP is zero or negative, the defensive winner is held at 100%; otherwise each selected non-positive sleeve is replaced by that defensive winner. EFO and URE are practical execution proxies, not exact tracker matches for VEA and VNQ.
+
+**Risk:** high-drawdown leveraged satellite, not a core holding. These ETFs target 2× daily returns, so results over a month or longer can materially differ from 2× the underlying return.""",
     "HAA-Simple Leveraged 2x (SSO)": """**HAA-Simple Leveraged 2x (SSO):** Calculate equal-weighted 13612U using unleveraged SPY and TIP. If both are strictly positive, hold 100% SSO. Otherwise, compare IEF and BIL momentum and hold the higher-momentum defensive asset. SSO momentum never controls the gate; IEF and BIL remain unleveraged.
 
 **Risk:** high-drawdown satellite, not a core holding. A monthly signal cannot prevent losses from a fast intramonth crash.""",
@@ -452,13 +456,16 @@ if page == "Signals":
         else:
             st.warning("No later trading observation is available yet, so an effective start date cannot be shown.")
         st.subheader("Why this allocation")
-        if isinstance(signal_strategy, HAA4):
+        if isinstance(signal_strategy, (HAA4, HAA4Leveraged2x)):
             if signal["regime"] == "risk-off":
-                st.write(f"TIP 13612U momentum is not positive, so the model holds 100% of the higher-momentum defensive asset: {signal['defensive_winner']}.")
+                holding = signal["selected_asset"] if isinstance(signal_strategy, HAA4Leveraged2x) else signal["defensive_winner"]
+                st.write(f"TIP 13612U momentum is not positive, so the model holds 100% of the higher-momentum defensive asset: {holding}.")
             elif signal["replaced_offensive_assets"]:
-                st.write(f"TIP 13612U momentum is positive, so the model selected {signal['selected_offensive_assets']}. The non-positive sleeve(s) {signal['replaced_offensive_assets']} were replaced with {signal['defensive_winner']}.")
+                mapped = f" Final holdings: {signal['mapped_holding_assets']}." if isinstance(signal_strategy, HAA4Leveraged2x) else ""
+                st.write(f"TIP 13612U momentum is positive, so the model selected {signal['selected_offensive_assets']}. The non-positive sleeve(s) {signal['replaced_offensive_assets']} were replaced with {signal['defensive_winner']}.{mapped}")
             else:
-                st.write(f"TIP 13612U momentum is positive and both selected offensive assets are positive, so the model holds {signal['selected_offensive_assets']} at 50% each.")
+                holdings = signal["mapped_holding_assets"] if isinstance(signal_strategy, HAA4Leveraged2x) else signal["selected_offensive_assets"]
+                st.write(f"TIP 13612U momentum is positive and both selected offensive assets are positive, so the model holds {holdings} at 50% each.")
         elif isinstance(signal_strategy, (HAAClassicNoQQQ, HAAClassicLeveragedNoQQQ)) and signal["regime"] == "risk-on":
             if isinstance(signal_strategy, HAAClassicLeveragedNoQQQ):
                 st.write(f"TIP 13612U momentum is strictly positive, so the model selects the four highest-momentum 1x underlyings ({signal['selected_underlying_assets']}) and holds their mapped 2x ETFs ({signal['mapped_holding_assets']}).")
@@ -533,10 +540,12 @@ if page == "Rules":
     st.write(f"Months with at least one missing canonical price: **{len(missing)}**")
     audit_momentum_assets = getattr(strategy, "signal_assets", data_assets)
     audit_columns = [f"{asset}_price" for asset in data_assets] + [f"{asset}_13612u" for asset in audit_momentum_assets]
-    if isinstance(strategy, (HAAClassicNoQQQ, HAAClassicLeveragedNoQQQ, HAA4)):
+    if isinstance(strategy, (HAAClassicNoQQQ, HAAClassicLeveragedNoQQQ, HAA4, HAA4Leveraged2x)):
         audit_columns += [f"{asset}_rank" for asset in strategy.offensive_assets] + ["selected_assets", "target_weights", "previous_weights"]
-        if isinstance(strategy, HAA4):
+        if isinstance(strategy, (HAA4, HAA4Leveraged2x)):
             audit_columns += ["defensive_winner", "selected_offensive_assets", "replaced_offensive_assets"]
+        if isinstance(strategy, HAA4Leveraged2x):
+            audit_columns += ["selected_underlying_assets", "mapped_holding_assets"]
         if isinstance(strategy, HAAClassicLeveragedNoQQQ):
             audit_columns += ["selected_underlying_assets", "mapped_holding_assets"]
     audit_columns += ["regime", "selected_asset", "previous_asset", "trade", "execution_date", "holding_end", "holding_period_return"]
