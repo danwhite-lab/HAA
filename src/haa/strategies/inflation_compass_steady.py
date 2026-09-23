@@ -29,7 +29,11 @@ class InflationCompassSteady:
         if missing:
             raise ValueError(f"Inflation Compass Steady is missing assets: {sorted(missing)}")
         prices = daily_prices.loc[:, self.data_assets].sort_index()
-        market = prices.loc[:, list(self.market_data_assets)]
+        # FRED has observations on some Federal business days when NYSE ETFs
+        # do not trade. Build every market indicator on the shared ETF trading
+        # calendar, rather than letting those macro-only rows break a 200-day
+        # moving average or a daily sector return.
+        market = prices.loc[:, list(self.market_data_assets)].dropna(how="any")
         market_returns = market.pct_change(fill_method=None)
         positive_returns = sum(market_returns[asset] * weight for asset, weight in self.positive_weights.items())
         negative_returns = sum(market_returns[asset] * weight for asset, weight in self.negative_weights.items())
@@ -43,7 +47,7 @@ class InflationCompassSteady:
 
         as_of = pd.Timestamp.now(tz="UTC").tz_localize(None)
         completed_period = as_of.to_period("M") - 1
-        market_dates = market.index[market.notna().all(axis=1) & (market.index.to_period("M") <= completed_period)]
+        market_dates = market.index[market.index.to_period("M") <= completed_period]
         decision_dates = market_dates.to_series().groupby(market_dates.to_period("M")).tail(1)
         rows: list[dict] = []
         previous_weights: dict[str, float] = {}
