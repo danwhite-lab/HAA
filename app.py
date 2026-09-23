@@ -64,9 +64,34 @@ st.markdown("""
   width: 3rem !important;
   min-width: 3rem !important;
 }
+/* Keep the app's preferences control visually aligned with Streamlit's
+   fixed toolbar rather than treating it as page content. */
+.st-key-user-settings {
+  position: fixed;
+  top: 0.35rem;
+  right: 10.8rem;
+  z-index: 1000000;
+}
+.st-key-user-settings [data-testid="stPopover"] > button {
+  width: 2rem;
+  min-width: 2rem;
+  height: 2rem;
+  min-height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.25rem;
+  background: transparent;
+  color: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.st-key-user-settings [data-testid="stPopover"] > button:hover {
+  background: rgba(49, 51, 63, 0.12);
+}
 @media (max-width: 640px) {
   .block-container { padding: 0.6rem 0.75rem 1.5rem !important; }
   [data-testid="stDataFrame"] { max-width: 100%; overflow-x: auto; }
+  .st-key-user-settings { right: 8.35rem; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -114,12 +139,14 @@ for key, value in {
     "uploaded_replacements": {},
 }.items():
     st.session_state.setdefault(key, value)
+st.session_state.setdefault("settings_cost_pct", st.session_state["cost_pct"] * 100)
+st.session_state.setdefault("settings_tax_rate", st.session_state["tax_rate"] * 100)
 if st.session_state["page"] == "Validation":
     st.session_state["page"] = "Rules"
 st.session_state["ticker_text"] = append_missing_default_tickers(st.session_state["ticker_text"])
 
 # Keep the primary signal uncluttered. The compact menu holds navigation and,
-# on Signals, the model chooser; the sidebar remains Backtest-only.
+# on Signals, the model chooser; data-source controls remain Backtest-only.
 with st.container(key="header-row"):
     title_column, menu_column = st.columns([12, 1])
     with menu_column:
@@ -127,6 +154,23 @@ with st.container(key="header-row"):
             page = st.radio("View", ("Signals", "Backtest", "Compare Models", "Rules"), key="page")
             if page == "Signals":
                 st.selectbox("Signal model", tuple(MODEL_OPTIONS), key="signals_model_name", help="This selector controls the Signals page only; it does not change the Backtest configuration.")
+
+# This fixed popover extends Streamlit's toolbar with the settings that belong
+# to an individual user's backtest.  Comparison controls intentionally remain
+# on Compare Models, where they apply only to that comparison.
+with st.container(key="user-settings"):
+    with st.popover("⚙", help="User settings"):
+        st.subheader("User settings")
+        st.caption("These defaults apply to the Backtest page. Compare Models has its own configuration.")
+        st.selectbox("Backtest model", tuple(MODEL_OPTIONS), key="model_name")
+        st.number_input("Initial investment", min_value=1.0, key="initial", step=1_000.0)
+        st.number_input("Transaction cost per entry/change (%)", min_value=0.0, max_value=10.0, step=0.01, key="settings_cost_pct")
+        st.toggle("Israeli capital-gains tax", key="tax_enabled")
+        st.number_input("Tax rate (%)", min_value=0.0, max_value=100.0, step=0.1, disabled=not st.session_state["tax_enabled"], key="settings_tax_rate")
+        st.caption("Data sources and replacement CSV files are managed in the Backtest sidebar.")
+
+st.session_state["cost_pct"] = st.session_state["settings_cost_pct"] / 100
+st.session_state["tax_rate"] = st.session_state["settings_tax_rate"] / 100
 
 model_name = st.session_state["model_name"]
 ticker_text = st.session_state["ticker_text"]
@@ -138,17 +182,10 @@ uploads = []
 
 if page == "Backtest":
     with st.sidebar:
-        st.header("Backtest configuration")
-        model_name = st.selectbox("Backtest model", tuple(MODEL_OPTIONS), key="model_name")
+        st.header("Backtest data")
         ticker_text = st.text_area("Yahoo Finance ticker sources", value=ticker_text, help="One asset role per line. Israeli roles CSPX_IL, IEF_IL, and AYALON_KASPIT always use public TASE/Maya data via tasekit; TIP and all other roles use Yahoo Finance.")
         uploads = st.file_uploader("Upload replacement CSV files", type="csv", accept_multiple_files=True, help=f"Upload one or more files named with one valid asset: {', '.join(ALL_MODEL_ASSETS)}.")
-        initial = st.number_input("Initial investment", min_value=1.0, value=initial, step=1_000.0)
-        cost_pct = st.number_input("Transaction cost per entry/change (%)", min_value=0.0, max_value=10.0, value=cost_pct * 100, step=0.01) / 100
-        tax_enabled = st.toggle("Israeli capital-gains tax", value=tax_enabled)
-        tax_rate = st.number_input("Tax rate (%)", min_value=0.0, max_value=100.0, value=tax_rate * 100, step=0.1, disabled=not tax_enabled) / 100
-    # The model selectbox already owns ``model_name`` in session state. Writing
-    # it again after instantiation raises StreamlitWidgetAlreadyInstantiatedError.
-    st.session_state.update({"ticker_text": ticker_text, "initial": initial, "cost_pct": cost_pct, "tax_enabled": tax_enabled, "tax_rate": tax_rate})
+    st.session_state["ticker_text"] = ticker_text
 
 strategy = MODEL_OPTIONS[model_name]()
 data_assets = getattr(strategy, "data_assets", ASSETS)
