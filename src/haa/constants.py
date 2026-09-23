@@ -27,6 +27,18 @@ CLASSIC_LEVERAGED_DATA_ASSETS = tuple(dict.fromkeys((*CLASSIC_DATA_ASSETS, *CLAS
 HAA4_OFFENSIVE_ASSETS = ("SPY", "VEA", "VNQ", "IEF")
 HAA4_DEFENSIVE_ASSETS = ("IEF", "BIL")
 HAA4_DATA_ASSETS = ("TIP", "BIL", "SPY", "VEA", "VNQ", "IEF")
+# HAA-4 Leveraged 2x makes every decision using the published, unleveraged
+# HAA-4 universe. These ETFs are execution vehicles only; BIL deliberately
+# remains unleveraged.
+HAA4_LEVERAGED_SUBSTITUTIONS = {
+    "SPY": "SSO",
+    "VEA": "EFO",
+    "VNQ": "URE",
+    "IEF": "UST",
+    "BIL": "BIL",
+}
+HAA4_LEVERAGED_HOLDINGS = ("SSO", "EFO", "URE", "UST", "BIL")
+HAA4_LEVERAGED_DATA_ASSETS = tuple(dict.fromkeys((*HAA4_DATA_ASSETS, *HAA4_LEVERAGED_HOLDINGS)))
 STRATEGY_NAME = "HAA-Simple"
 MOMENTUM_LOOKBACKS = (1, 3, 6, 12)
 DEFAULT_TAX_RATE = 0.25
