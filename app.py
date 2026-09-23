@@ -8,20 +8,21 @@ import plotly.express as px
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-from haa.constants import ASSETS, DEFAULT_TAX_RATE, ISRAEL_SIMPLE_ASSETS
+from haa.constants import ASSETS, DEFAULT_TAX_RATE, FRED_ASSETS, ISRAEL_SIMPLE_ASSETS
 # Comparison logic stays outside the UI so it can enforce a shared period.
 from haa.comparison import ModelInput, compare_models
-from haa.data import combine_replacements, common_monthly_period, date_ranges, default_ticker_map, download_yahoo_prices, parse_ticker_map, read_uploaded_csv, to_month_end, upload_asset_from_filename
+from haa.data import combine_replacements, common_monthly_period, date_ranges, default_ticker_map, download_fred_series, download_yahoo_prices, parse_ticker_map, read_uploaded_csv, to_month_end, upload_asset_from_filename
 from haa.engine import run_backtest
 from haa.metrics import annual_returns, performance_metrics
 from haa.signals import first_trading_day_after, latest_actionable_signal
-from haa.strategies import HAA4, HAA4Leveraged2x, HAAClassicLeveragedNoQQQ, HAAClassicNoQQQ, HAASimple, HAASimpleIsrael, HAASimpleLeveraged2x
+from haa.strategies import HAA4, HAA4Leveraged2x, HAAClassicLeveragedNoQQQ, HAAClassicNoQQQ, HAASimple, HAASimpleIsrael, HAASimpleLeveraged2x, InflationCompassSteady
 from haa.tase_data import TASE_ISRAEL_ASSET_IDS, TaseDataError, download_tase_israel_prices
 
 MODEL_OPTIONS = {
     "HAA-Simple": HAASimple,
     "HAA 4": HAA4,
     "HAA 4 Leveraged 2x": HAA4Leveraged2x,
+    "Inflation Compass Steady (80-day)": InflationCompassSteady,
     "HAA-Simple Leveraged 2x (SSO)": HAASimpleLeveraged2x,
     "HAA-Simple Israel": HAASimpleIsrael,
     "HAA Classic (No QQQ)": HAAClassicNoQQQ,
@@ -33,6 +34,9 @@ MODEL_RULES = {
     "HAA 4 Leveraged 2x": """**HAA 4 Leveraged 2x:** HAA-4's TIP gate, Top-2 ranking, and sleeve-level defensive replacement all use unleveraged TIP, SPY, VEA, VNQ, IEF, and BIL momentum. Only after that decision are holdings mapped: SPY→SSO, VEA→EFO, VNQ→URE, IEF→UST, and BIL→BIL. If TIP is zero or negative, the defensive winner is held at 100%; otherwise each selected non-positive sleeve is replaced by that defensive winner. EFO and URE are practical execution proxies, not exact tracker matches for VEA and VNQ.
 
 **Risk:** high-drawdown leveraged satellite, not a core holding. These ETFs target 2× daily returns, so results over a month or longer can materially differ from 2× the underlying return.""",
+    "Inflation Compass Steady (80-day)": """**Inflation Compass Steady (80-day):** On the final NYSE trading day of each month, growth is on when SPY is above its 200-day SMA. Inflation is on when the prior trading day's T5YIE is above 2% and either exceeds its value 80 valid trading observations earlier or the 80-day linear-regression slope of the published inflation-sector indicator is positive. The indicator compounds daily rebalanced positive-basket returns (50% XLE; one-sixth each XLI/XLF/XLB) divided by daily rebalanced negative-basket returns (one-third each XLU/XLV/XLP). Holdings are XLE, XLK, XLU, or 50/50 XLP/IEF by the resulting regime. No CPI fallback is used, so the model begins in 2003.
+
+**Risk:** concentrated sector allocation. T5YIE is market-implied and may be distorted in stressed markets; signals are informational only.""",
     "HAA-Simple Leveraged 2x (SSO)": """**HAA-Simple Leveraged 2x (SSO):** Calculate equal-weighted 13612U using unleveraged SPY and TIP. If both are strictly positive, hold 100% SSO. Otherwise, compare IEF and BIL momentum and hold the higher-momentum defensive asset. SSO momentum never controls the gate; IEF and BIL remain unleveraged.
 
 **Risk:** high-drawdown satellite, not a core holding. A monthly signal cannot prevent losses from a fast intramonth crash.""",
@@ -44,7 +48,7 @@ MODEL_RULES = {
 }
 ALL_MODEL_ASSETS = tuple(dict.fromkeys(asset for model_class in MODEL_OPTIONS.values() for asset in getattr(model_class, "data_assets", ASSETS)))
 TASE_ASSETS = tuple(asset for asset in ISRAEL_SIMPLE_ASSETS if asset != "TIP")
-YAHOO_ASSETS = tuple(asset for asset in ALL_MODEL_ASSETS if asset not in TASE_ASSETS)
+YAHOO_ASSETS = tuple(asset for asset in ALL_MODEL_ASSETS if asset not in (*TASE_ASSETS, *FRED_ASSETS))
 
 st.set_page_config(page_title="HAA Backtest", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
@@ -162,6 +166,11 @@ def load_data(source_items: tuple[tuple[str, str], ...]):
     return download_yahoo_prices(dict(source_items))
 
 
+@st.cache_data(ttl=6 * 60 * 60, show_spinner="Downloading FRED macro data...")
+def load_fred_data():
+    return download_fred_series(FRED_ASSETS)
+
+
 @st.cache_data(ttl=6 * 60 * 60, show_spinner="Downloading public TASE/Maya price history...")
 def load_tase_data():
     """Cache successful public-source requests and avoid repeated TASE traffic."""
@@ -172,6 +181,14 @@ try:
 except Exception as exc:
     st.error(f"Yahoo Finance download failed: {exc}")
     st.stop()
+
+try:
+    fred_prices = load_fred_data()
+    fred_warning: str | None = None
+except Exception as exc:
+    # FRED is required only by Inflation Compass; keep existing models usable.
+    fred_warning = str(exc)
+    fred_prices = pd.DataFrame(columns=FRED_ASSETS, dtype=float)
 
 tase_warning: str | None = None
 try:
@@ -198,7 +215,7 @@ if page == "Backtest":
         except ValueError as exc:
             st.sidebar.error(str(exc))
     st.session_state["uploaded_replacements"] = replacements
-downloaded_all = downloaded.join(tase_prices, how="outer")
+downloaded_all = downloaded.join(tase_prices, how="outer").join(fred_prices, how="outer")
 all_prices = combine_replacements(downloaded_all, replacements, ALL_MODEL_ASSETS)
 source_metadata = pd.DataFrame(
     {
@@ -209,10 +226,13 @@ source_metadata = pd.DataFrame(
     index=pd.Index(YAHOO_ASSETS, name="asset"),
 )
 source_metadata = pd.concat([source_metadata, tase_metadata]).reindex(ALL_MODEL_ASSETS)
+for asset in FRED_ASSETS:
+    source_metadata.loc[asset] = {"source": "FRED", "identifier": asset, "price_field": "Daily observation"}
 for asset in replacements:
     source_metadata.loc[asset] = {"source": "User CSV replacement", "identifier": asset, "price_field": "Adj Close or Close"}
 prices = all_prices.loc[:, data_assets]
-monthly = to_month_end(prices)
+market_data_assets = getattr(strategy, "market_data_assets", data_assets)
+monthly = to_month_end(prices.loc[:, list(market_data_assets)])
 all_monthly = to_month_end(all_prices)
 ranges = date_ranges(prices)
 common_start, common_end = common_monthly_period(monthly)
@@ -243,7 +263,8 @@ if page == "Backtest":
         end = st.date_input("Backtest end (holding-period execution date)", value=end, min_value=common_start.date(), max_value=execution_end_limit)
     st.session_state.update({"start": start, "end": end})
 
-decisions = strategy.decisions(monthly)
+decision_prices = prices if getattr(strategy, "uses_daily_signals", False) else monthly
+decisions = strategy.decisions(decision_prices)
 if decisions.empty:
     st.error(f"Insufficient history for {strategy.name}.")
     st.stop()
@@ -319,8 +340,10 @@ if page == "Compare Models":
                 selected_strategy = MODEL_OPTIONS[selected_name]()
                 selected_assets = getattr(selected_strategy, "data_assets", ASSETS)
                 selected_daily = all_prices.loc[:, selected_assets]
-                selected_monthly = to_month_end(selected_daily)
-                comparison_inputs[selected_name] = ModelInput(selected_name, selected_strategy.decisions(selected_monthly), selected_monthly, selected_daily, getattr(selected_strategy, "benchmark_asset", "SPY"))
+                selected_market_assets = getattr(selected_strategy, "market_data_assets", selected_assets)
+                selected_monthly = to_month_end(selected_daily.loc[:, list(selected_market_assets)])
+                selected_decision_prices = selected_daily if getattr(selected_strategy, "uses_daily_signals", False) else selected_monthly
+                comparison_inputs[selected_name] = ModelInput(selected_name, selected_strategy.decisions(selected_decision_prices), selected_monthly, selected_daily, getattr(selected_strategy, "benchmark_asset", "SPY"))
                 first_date, last_date = common_monthly_period(selected_monthly)
                 if first_date is None or last_date is None:
                     raise ValueError(f"{selected_name} has no common monthly data.")
@@ -423,9 +446,11 @@ if page == "Signals":
     signal_data_assets = getattr(signal_strategy, "data_assets", ASSETS)
     signal_momentum_assets = getattr(signal_strategy, "signal_assets", signal_data_assets)
     signal_prices = all_prices.loc[:, signal_data_assets]
-    signal_monthly = to_month_end(signal_prices)
-    signal_decisions = signal_strategy.decisions(signal_monthly)
-    signal_status = latest_actionable_signal(signal_decisions, signal_monthly, signal_data_assets)
+    signal_market_assets = getattr(signal_strategy, "market_data_assets", signal_data_assets)
+    signal_monthly = to_month_end(signal_prices.loc[:, list(signal_market_assets)])
+    signal_decision_prices = signal_prices if getattr(signal_strategy, "uses_daily_signals", False) else signal_monthly
+    signal_decisions = signal_strategy.decisions(signal_decision_prices)
+    signal_status = latest_actionable_signal(signal_decisions, signal_monthly, signal_market_assets)
     if signal_status.decision is None:
         title_column.title("Signal")
         title_column.caption(f"Model: {signal_model_name} · Completed month-end signal")
@@ -466,6 +491,8 @@ if page == "Signals":
             else:
                 holdings = signal["mapped_holding_assets"] if isinstance(signal_strategy, HAA4Leveraged2x) else signal["selected_offensive_assets"]
                 st.write(f"TIP 13612U momentum is positive and both selected offensive assets are positive, so the model holds {holdings} at 50% each.")
+        elif isinstance(signal_strategy, InflationCompassSteady):
+            st.write(f"Growth is {'up' if signal['growth_up'] else 'down'} and inflation is {'on' if signal['inflation_on'] else 'off'}, producing the {signal['regime'].replace('-', ' ')} allocation.")
         elif isinstance(signal_strategy, (HAAClassicNoQQQ, HAAClassicLeveragedNoQQQ)) and signal["regime"] == "risk-on":
             if isinstance(signal_strategy, HAAClassicLeveragedNoQQQ):
                 st.write(f"TIP 13612U momentum is strictly positive, so the model selects the four highest-momentum 1x underlyings ({signal['selected_underlying_assets']}) and holds their mapped 2x ETFs ({signal['mapped_holding_assets']}).")
@@ -513,6 +540,8 @@ if page == "Signals":
         st.caption("This signal uses completed month-end data only. Backtest settings do not affect it.")
         if isinstance(signal_strategy, HAASimpleIsrael) and tase_warning:
             st.warning(f"Public TASE/Maya retrieval issue: {tase_warning}")
+        if isinstance(signal_strategy, InflationCompassSteady) and fred_warning:
+            st.warning(f"FRED retrieval issue: {fred_warning}")
         st.dataframe(source_metadata.loc[list(signal_data_assets)], use_container_width=True)
         raw_ranges = date_ranges(signal_prices)
         st.dataframe(raw_ranges, use_container_width=True)
@@ -535,6 +564,8 @@ if page == "Rules":
     st.subheader("Data sources and coverage")
     if isinstance(strategy, HAASimpleIsrael) and tase_warning:
         st.warning(f"Public TASE/Maya retrieval issue: {tase_warning}")
+    if isinstance(strategy, InflationCompassSteady) and fred_warning:
+        st.warning(f"FRED retrieval issue: {fred_warning}")
     st.dataframe(source_metadata.loc[list(data_assets)].join(date_ranges(prices)), use_container_width=True)
     missing = monthly[monthly.isna().any(axis=1)]
     st.write(f"Months with at least one missing canonical price: **{len(missing)}**")
@@ -546,6 +577,8 @@ if page == "Rules":
             audit_columns += ["defensive_winner", "selected_offensive_assets", "replaced_offensive_assets"]
         if isinstance(strategy, HAA4Leveraged2x):
             audit_columns += ["selected_underlying_assets", "mapped_holding_assets"]
+    if isinstance(strategy, InflationCompassSteady):
+        audit_columns += ["SPY_200d_sma", "t5yie_lag_date", "t5yie_lagged", "t5yie_80d_date", "t5yie_80d", "positive_basket_growth", "negative_basket_growth", "inflation_indicator", "indicator_80d_slope", "growth_up", "inflation_level", "breakeven_momentum", "asset_momentum", "inflation_on", "target_weights", "previous_weights"]
         if isinstance(strategy, HAAClassicLeveragedNoQQQ):
             audit_columns += ["selected_underlying_assets", "mapped_holding_assets"]
     audit_columns += ["regime", "selected_asset", "previous_asset", "trade", "execution_date", "holding_end", "holding_period_return"]
