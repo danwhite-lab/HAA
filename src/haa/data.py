@@ -96,12 +96,16 @@ def download_fred_series(series_ids: Iterable[str]) -> pd.DataFrame:
     for series_id in series:
         url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
         try:
-            frame = pd.read_csv(url, parse_dates=["DATE"])
+            frame = pd.read_csv(url)
         except Exception as exc:
             raise RuntimeError(f"FRED download failed for {series_id}: {exc}") from exc
+        date_column = next((column for column in frame.columns if str(column).strip().lower() in {"date", "observation_date"}), None)
+        if date_column is None:
+            raise RuntimeError(f"FRED response for {series_id} did not contain a date column.")
         if series_id not in frame.columns:
             raise RuntimeError(f"FRED response did not contain {series_id}.")
-        result[series_id] = pd.to_numeric(frame.set_index("DATE")[series_id], errors="coerce")
+        frame[date_column] = pd.to_datetime(frame[date_column], errors="coerce")
+        result[series_id] = pd.to_numeric(frame.dropna(subset=[date_column]).set_index(date_column)[series_id], errors="coerce")
     return _clean_prices(pd.DataFrame(result))
 
 
