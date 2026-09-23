@@ -39,6 +39,11 @@ HAA4_LEVERAGED_SUBSTITUTIONS = {
 }
 HAA4_LEVERAGED_HOLDINGS = ("SSO", "EFO", "URE", "UST", "BIL")
 HAA4_LEVERAGED_DATA_ASSETS = tuple(dict.fromkeys((*HAA4_DATA_ASSETS, *HAA4_LEVERAGED_HOLDINGS)))
+# Inflation Compass uses FRED's daily five-year breakeven as a signal-only
+# macro input; all other symbols are Yahoo-priced tradable ETFs.
+FRED_ASSETS = ("T5YIE",)
+INFLATION_COMPASS_MARKET_ASSETS = ("SPY", "XLE", "XLK", "XLU", "XLP", "IEF", "XLI", "XLF", "XLB", "XLV")
+INFLATION_COMPASS_DATA_ASSETS = (*INFLATION_COMPASS_MARKET_ASSETS, *FRED_ASSETS)
 STRATEGY_NAME = "HAA-Simple"
 MOMENTUM_LOOKBACKS = (1, 3, 6, 12)
 DEFAULT_TAX_RATE = 0.25
