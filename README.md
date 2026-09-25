@@ -6,6 +6,8 @@ A deliberately small, auditable Streamlit backtester for defined HAA variants. I
 
 - **HAA-Simple:** uses SPY and TIP 13612U signals; holds SPY only when both are positive, otherwise the stronger of IEF/BIL.
 - **HAA 4:** published four-asset HAA variant. TIP is the canary; a non-positive TIP signal holds the stronger of IEF/BIL. With a positive TIP signal, it ranks SPY, VEA, VNQ, and IEF, holds the top two at 50% each, and replaces each selected non-positive-momentum sleeve with the stronger IEF/BIL defensive asset. IEF is intentionally eligible in both universes.
+- **HAA 4 Leveraged 2x:** applies the same HAA-4 decisions using unleveraged TIP, SPY, VEA, VNQ, IEF, and BIL data, then maps executed holdings to SPY→SSO, VEA→EFO, VNQ→URE, IEF→UST, and BIL→BIL. The 2× ETFs never influence a signal. EFO and URE are practical execution proxies rather than exact tracker matches for VEA and VNQ; their returns target 2× daily performance and can differ materially from 2× over longer periods. This is a high-drawdown satellite, not a core holding.
+- **Inflation Compass Steady (80-day):** compares SPY with its 200-day SMA and reads the prior trading day's five-year breakeven inflation rate (FRED `T5YIE`). Inflation is on above 2% when either the breakeven is higher than 80 valid trading observations earlier or the 80-day linear-regression slope of the published, daily-rebalanced sector indicator is positive. It holds XLE, XLK, XLU, or 50/50 XLP/IEF by regime. This post-breakeven implementation has no CPI fallback, so it begins in 2003.
 - **HAA-Simple Leveraged 2x (SSO):** uses the *same unleveraged SPY and TIP signals* but holds SSO in risk-on periods. It always de-risks to unleveraged IEF/BIL. SSO momentum never controls the gate. This is a high-drawdown satellite, not a core holding.
 - **HAA-Simple Israel:** retains TIP as a U.S. signal-only canary, uses TASE-listed CSPX (1159250) for the equity signal/holding, and compares TASE-listed iShares $ Treasury Bond 7–10yr UCITS (1159268) with Ayalon Kaspit (5136866) in risk-off periods. It is an ILS local-investability variant with its own CSPX benchmark; it does not use MAKAM 800 as a holding series. TIP is downloaded from Yahoo Finance; the three Israeli sleeves are downloaded from public TASE/Maya endpoints through tasekit.
 - **HAA Classic (No QQQ):** TIP is the sole canary. When TIP 13612U is positive, it holds the top four assets at 25% each from IEF, SPY, IWM, PDBC, TLT, VEA, VNQ, and VWO. IEF is eligible in both the risk-on ranking and the IEF/BIL defensive choice; BIL is defensive-only. QQQ and leverage are intentionally excluded.
@@ -13,7 +15,7 @@ A deliberately small, auditable Streamlit backtester for defined HAA variants. I
 
 ## What it does
 
-At each completed month it uses Yahoo Finance adjusted close data for TIP and the non-Israel models; HAA-Simple Israel uses public TASE/Maya data through tasekit for its Israeli sleeves. A user replacement CSV can replace any asset. It calculates HAA's equal-weighted **13612U** composite:
+At each completed month it uses Yahoo Finance adjusted close data for TIP and the non-Israel ETF models; Inflation Compass additionally uses FRED's daily `T5YIE` observation as a signal-only macro input. HAA-Simple Israel uses public TASE/Maya data through tasekit for its Israeli sleeves. A user replacement CSV can replace any asset. It calculates HAA's equal-weighted **13612U** composite:
 
 ```
 (1-month return + 3-month return + 6-month return + 12-month return) / 4
@@ -30,7 +32,7 @@ pip install -e '.[dev]'
 streamlit run app.py
 ```
 
-The app downloads Yahoo Finance history automatically. In the sidebar, enter the source ticker for each Yahoo role as `ROLE=TICKER` (for example, `SPY=SPY` or `SPY=VOO` for a validation replacement). The leveraged model also requests `SSO=SSO`; Classic requests IWM, PDBC, TLT, VEA, VNQ, and VWO. `CSPX_IL`, `IEF_IL`, and `AYALON_KASPIT` are not Yahoo-configurable: they map respectively to TASE IDs `1159250`, `1159268`, and `5136866`.
+The app downloads Yahoo Finance history automatically. In the sidebar, enter the source ticker for each Yahoo role as `ROLE=TICKER` (for example, `SPY=SPY` or `SPY=VOO` for a validation replacement). Leveraged models also request their actual execution tickers; HAA 4 Leveraged 2x uses `SSO`, `EFO`, `URE`, and `UST`. Classic requests IWM, PDBC, TLT, VEA, VNQ, and VWO. `CSPX_IL`, `IEF_IL`, and `AYALON_KASPIT` are not Yahoo-configurable: they map respectively to TASE IDs `1159250`, `1159268`, and `5136866`.
 
 The Israel adapter uses the first available published ETF field in this order: `Adj Close`, `NAV`, then `Close`. For Ayalon Kaspit it uses the Maya-published mutual-fund redemption price. It preserves native ILS and USD exposure and does not perform FX conversion. Successful public TASE/Maya requests are cached for six hours; this is a personal-research data source, not a guaranteed production feed. The public endpoints can change or be blocked. If a retrieval fails or lacks history, the app makes this visible and does not fabricate a series.
 

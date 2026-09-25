@@ -89,6 +89,26 @@ def download_yahoo_prices(ticker_map: Mapping[str, str] | None = None) -> pd.Dat
     return _clean_prices(result)
 
 
+def download_fred_series(series_ids: Iterable[str]) -> pd.DataFrame:
+    """Download public daily FRED observations without fabricating gaps."""
+    series = tuple(series_ids)
+    result: dict[str, pd.Series] = {}
+    for series_id in series:
+        url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
+        try:
+            frame = pd.read_csv(url)
+        except Exception as exc:
+            raise RuntimeError(f"FRED download failed for {series_id}: {exc}") from exc
+        date_column = next((column for column in frame.columns if str(column).strip().lower() in {"date", "observation_date"}), None)
+        if date_column is None:
+            raise RuntimeError(f"FRED response for {series_id} did not contain a date column.")
+        if series_id not in frame.columns:
+            raise RuntimeError(f"FRED response did not contain {series_id}.")
+        frame[date_column] = pd.to_datetime(frame[date_column], errors="coerce")
+        result[series_id] = pd.to_numeric(frame.dropna(subset=[date_column]).set_index(date_column)[series_id], errors="coerce")
+    return _clean_prices(pd.DataFrame(result))
+
+
 def read_uploaded_csv(content: bytes, asset: str) -> pd.Series:
     """Read a validation replacement CSV with Date plus Adj Close or Close."""
     frame = pd.read_csv(BytesIO(content))
