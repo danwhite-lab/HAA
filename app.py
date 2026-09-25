@@ -650,3 +650,5 @@ if page == "Rules":
     st.dataframe(prices, use_container_width=True)
     st.dataframe(monthly, use_container_width=True)
     st.caption("Automated validation: run `pytest` locally; tests cover strategy selection, timing, benchmark dates, tax realization, conditional early risk-on execution, and a hand-calculated 13612U example.")
+
+# Deployment marker: Plus classes are embedded in the stable strategy module.
