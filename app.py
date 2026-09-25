@@ -15,7 +15,7 @@ from haa.data import combine_replacements, common_monthly_period, date_ranges, d
 from haa.engine import run_backtest
 from haa.metrics import annual_returns, performance_metrics
 from haa.signals import first_trading_day_after, latest_actionable_signal
-from haa.strategies import HAA4, HAA4Leveraged2x, HAAClassicLeveragedNoQQQ, HAAClassicNoQQQ, HAASimple, HAASimpleIsrael, HAASimpleLeveraged2x, InflationCompassPlus, InflationCompassPlusDriftBands, InflationCompassSteady
+from haa.strategies import HAA4, HAA4Leveraged2x, HAAClassicLeveragedNoQQQ, HAAClassicNoQQQ, HAASimple, HAASimpleIsrael, HAASimpleLeveraged2x, InflationCompassSteady
 from haa.tase_data import TASE_ISRAEL_ASSET_IDS, TaseDataError, download_tase_israel_prices
 
 MODEL_OPTIONS = {
@@ -23,14 +23,11 @@ MODEL_OPTIONS = {
     "HAA 4": HAA4,
     "HAA 4 Leveraged 2x": HAA4Leveraged2x,
     "Inflation Compass Steady (80-day)": InflationCompassSteady,
-    "Inflation Compass Plus": InflationCompassPlus,
-    "Inflation Compass Plus Drift Bands": InflationCompassPlusDriftBands,
     "HAA-Simple Leveraged 2x (SSO)": HAASimpleLeveraged2x,
     "HAA-Simple Israel": HAASimpleIsrael,
     "HAA Classic (No QQQ)": HAAClassicNoQQQ,
     "HAA Classic Leveraged 2x (No QQQ)": HAAClassicLeveragedNoQQQ,
 }
-INFLATION_COMPASS_VARIANTS = (InflationCompassSteady, InflationCompassPlus, InflationCompassPlusDriftBands)
 MODEL_RULES = {
     "HAA-Simple": """**HAA-Simple:** At each month-end, calculate equal-weighted 13612U momentum for SPY and TIP. If both are strictly positive, hold 100% SPY. Otherwise, compare IEF and BIL 13612U momentum and hold 100% of the higher-momentum asset. The decision earns the following month's return only.""",
     "HAA 4": """**HAA 4:** TIP is the sole canary. If TIP's equal-weighted 13612U momentum is zero or negative, hold 100% of the higher-momentum asset from IEF and BIL. If TIP is strictly positive, rank SPY, VEA, VNQ, and IEF by 13612U and select the top two at 50% each. Then replace each selected asset whose own momentum is zero or negative with the higher-momentum IEF/BIL defensive asset. This can produce a mixed offensive/defensive allocation. IEF is eligible in both universes.""",
@@ -40,8 +37,6 @@ MODEL_RULES = {
     "Inflation Compass Steady (80-day)": """**Inflation Compass Steady (80-day):** On the final NYSE trading day of each month, growth is on when SPY is above its 200-day SMA. Inflation is on when the prior trading day's T5YIE is above 2% and either exceeds its value 80 valid trading observations earlier or the 80-day linear-regression slope of the published inflation-sector indicator is positive. The indicator compounds daily rebalanced positive-basket returns (50% XLE; one-sixth each XLI/XLF/XLB) divided by daily rebalanced negative-basket returns (one-third each XLU/XLV/XLP). Holdings are XLE, XLK, XLU, or 50/50 XLP/IEF by the resulting regime. No CPI fallback is used, so the model begins in 2003.
 
 **Risk:** concentrated sector allocation. T5YIE is market-implied and may be distorted in stressed markets; signals are informational only.""",
-    "Inflation Compass Plus": """**Inflation Compass Plus:** Preserve Inflation Compass Steady's growth signal and 80-day sector indicator. Classify lagged T5YIE as above 2% rising, above 2% falling/transition, or at/below 2% by comparing the current lagged value with the latest lagged value available for the completed month-end three calendar months earlier. Equal above-2% readings retain the prior direction; before a prior direction exists, they use the transition state. Allocations are XLE, XLE/XLK, XLK, XLU, XLU/XLP/IEF, or XLP/IEF according to the six-state matrix. T5YIE only; no CPI fallback.""",
-    "Inflation Compass Plus Drift Bands": """**Inflation Compass Plus Drift Bands:** Same rules and allocations as Inflation Compass Plus, with 10-percentage-point drift bands for unchanged split allocations. Regime or target changes always reset to target; unchanged split allocations rebalance only when a holding is more than 10 percentage points from target.""",
     "HAA-Simple Leveraged 2x (SSO)": """**HAA-Simple Leveraged 2x (SSO):** Calculate equal-weighted 13612U using unleveraged SPY and TIP. If both are strictly positive, hold 100% SSO. Otherwise, compare IEF and BIL momentum and hold the higher-momentum defensive asset. SSO momentum never controls the gate; IEF and BIL remain unleveraged.
 
 **Risk:** high-drawdown satellite, not a core holding. A monthly signal cannot prevent losses from a fast intramonth crash.""",
@@ -533,7 +528,7 @@ if page == "Signals":
             else:
                 holdings = signal["mapped_holding_assets"] if isinstance(signal_strategy, HAA4Leveraged2x) else signal["selected_offensive_assets"]
                 st.write(f"TIP 13612U momentum is positive and both selected offensive assets are positive, so the model holds {holdings} at 50% each.")
-        elif isinstance(signal_strategy, INFLATION_COMPASS_VARIANTS):
+        elif isinstance(signal_strategy, InflationCompassSteady):
             st.write(f"Growth is {'up' if signal['growth_up'] else 'down'} and inflation is {'on' if signal['inflation_on'] else 'off'}, producing the {signal['regime'].replace('-', ' ')} allocation.")
         elif isinstance(signal_strategy, (HAAClassicNoQQQ, HAAClassicLeveragedNoQQQ)) and signal["regime"] == "risk-on":
             if isinstance(signal_strategy, HAAClassicLeveragedNoQQQ):
@@ -554,7 +549,7 @@ if page == "Signals":
             st.write(f"SPY and TIP 13612U momentum are both strictly positive, so the model selects {holding}.")
         else:
             st.write(f"At least one of SPY or TIP 13612U momentum is not positive, so the model selects the higher-momentum defensive asset: {signal['selected_asset']}.")
-        if isinstance(signal_strategy, INFLATION_COMPASS_VARIANTS):
+        if isinstance(signal_strategy, InflationCompassSteady):
             compass_inputs = pd.DataFrame([{
                 "SPY close": signal["SPY_price"],
                 "SPY 200-day SMA": signal["SPY_200d_sma"],
@@ -600,7 +595,7 @@ if page == "Signals":
         st.caption("This signal uses completed month-end data only. Backtest settings do not affect it.")
         if isinstance(signal_strategy, HAASimpleIsrael) and tase_warning:
             st.warning(f"Public TASE/Maya retrieval issue: {tase_warning}")
-        if isinstance(signal_strategy, INFLATION_COMPASS_VARIANTS) and fred_warning:
+        if isinstance(signal_strategy, InflationCompassSteady) and fred_warning:
             st.warning(f"FRED retrieval issue: {fred_warning}")
         st.dataframe(source_metadata.loc[list(signal_data_assets)], use_container_width=True)
         raw_ranges = date_ranges(signal_prices)
@@ -624,7 +619,7 @@ if page == "Rules":
     st.subheader("Data sources and coverage")
     if isinstance(strategy, HAASimpleIsrael) and tase_warning:
         st.warning(f"Public TASE/Maya retrieval issue: {tase_warning}")
-    if isinstance(strategy, INFLATION_COMPASS_VARIANTS) and fred_warning:
+    if isinstance(strategy, InflationCompassSteady) and fred_warning:
         st.warning(f"FRED retrieval issue: {fred_warning}")
     st.dataframe(source_metadata.loc[list(data_assets)].join(date_ranges(prices)), use_container_width=True)
     missing = monthly[monthly.isna().any(axis=1)]
@@ -637,7 +632,7 @@ if page == "Rules":
             audit_columns += ["defensive_winner", "selected_offensive_assets", "replaced_offensive_assets"]
         if isinstance(strategy, HAA4Leveraged2x):
             audit_columns += ["selected_underlying_assets", "mapped_holding_assets"]
-    if isinstance(strategy, INFLATION_COMPASS_VARIANTS):
+    if isinstance(strategy, InflationCompassSteady):
         audit_columns += ["SPY_200d_sma", "t5yie_lag_date", "t5yie_lagged", "t5yie_80d_date", "t5yie_80d", "positive_basket_growth", "negative_basket_growth", "inflation_indicator", "indicator_80d_slope", "growth_up", "inflation_level", "breakeven_momentum", "asset_momentum", "inflation_on", "target_weights", "previous_weights"]
         if isinstance(strategy, HAAClassicLeveragedNoQQQ):
             audit_columns += ["selected_underlying_assets", "mapped_holding_assets"]
@@ -650,5 +645,3 @@ if page == "Rules":
     st.dataframe(prices, use_container_width=True)
     st.dataframe(monthly, use_container_width=True)
     st.caption("Automated validation: run `pytest` locally; tests cover strategy selection, timing, benchmark dates, tax realization, conditional early risk-on execution, and a hand-calculated 13612U example.")
-
-# Deployment marker: Plus classes are embedded in the stable strategy module.
