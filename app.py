@@ -162,7 +162,6 @@ with st.container(key="user-settings"):
     with st.popover("⚙", help="User settings"):
         st.subheader("User settings")
         st.caption("These defaults apply to the Backtest page. Compare Models has its own configuration.")
-        st.selectbox("Backtest model", tuple(MODEL_OPTIONS), key="model_name")
         st.number_input("Initial investment", min_value=1.0, key="initial", step=1_000.0)
         st.number_input("Transaction cost per entry/change (%)", min_value=0.0, max_value=10.0, step=0.01, key="settings_cost_pct")
         st.toggle("Israeli capital-gains tax", key="tax_enabled")
@@ -183,6 +182,7 @@ uploads = []
 if page == "Backtest":
     with st.sidebar:
         st.header("Backtest data")
+        model_name = st.selectbox("Backtest model", tuple(MODEL_OPTIONS), key="model_name")
         ticker_text = st.text_area("Yahoo Finance ticker sources", value=ticker_text, help="One asset role per line. Israeli roles CSPX_IL, IEF_IL, and AYALON_KASPIT always use public TASE/Maya data via tasekit; TIP and all other roles use Yahoo Finance.")
         uploads = st.file_uploader("Upload replacement CSV files", type="csv", accept_multiple_files=True, help=f"Upload one or more files named with one valid asset: {', '.join(ALL_MODEL_ASSETS)}.")
     st.session_state["ticker_text"] = ticker_text
