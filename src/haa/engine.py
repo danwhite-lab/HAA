@@ -178,8 +178,13 @@ def _run_weighted_backtest(
     output: list[dict] = []
     for _, row in execution.iterrows():
         weights = _normalise_weights(row.target_weights)
-        changing = bool(previous_weights) and weights != previous_weights
+        forced_rebalance = bool(row.get("rebalance_required", False))
+        changing = bool(previous_weights) and (weights != previous_weights or forced_rebalance)
         turnover = _weight_turnover(previous_weights, weights)
+        if forced_rebalance and weights == previous_weights and after_positions:
+            current_total = sum(after_positions.values())
+            current_weights = {asset: value / current_total for asset, value in after_positions.items() if current_total}
+            turnover = sum(max(0.0, weights.get(asset, 0.0) - current_weights.get(asset, 0.0)) for asset in set(weights) | set(current_weights))
         prior_pre_value, prior_after_value, prior_benchmark_value = pre_value, after_value, benchmark_value
         pre_value *= 1 - transaction_cost * turnover
         pre_value *= 1 + row.holding_period_return
