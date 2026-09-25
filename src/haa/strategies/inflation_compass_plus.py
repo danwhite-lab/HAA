@@ -1,4 +1,5 @@
 """Inflation Compass Plus: three-state T5YIE regime allocation."""
+# Deployment marker: force Streamlit Cloud to rebuild the Plus strategy tree.
 from __future__ import annotations
 
 import numpy as np
@@ -99,39 +100,7 @@ class InflationCompassPlus:
                 if any(abs(drift[a] - weights[a]) > 0.10 for a in weights):
                     rebalance_required = True
                     reason = "drift-band"
-            rows.append({
-                "signal_date": date,
-                **{f"{asset}_price": prices.loc[date, asset] for asset in self.data_assets},
-                "SPY_200d_sma": float(spy_sma.loc[date]),
-                "t5yie_lag_date": current_date,
-                "t5yie_lagged": current,
-                "t5yie_three_month_date": comparison_date,
-                "t5yie_three_month": comparison,
-                # Compatibility aliases used by the existing compass audit UI.
-                "t5yie_80d_date": comparison_date,
-                "t5yie_80d": comparison,
-                "inflation_level": level,
-                "raw_direction": raw_direction,
-                "persisted_direction": stored_direction,
-                "inflation_state": inflation_state,
-                "growth_up": growth_up,
-                "positive_basket_growth": float(positive_growth.loc[date]),
-                "negative_basket_growth": float(negative_growth.loc[date]),
-                "inflation_indicator": float(indicator.loc[date]),
-                "indicator_80d_slope": slope,
-                "breakeven_momentum": raw_direction == "rising",
-                "asset_momentum": slope > 0,
-                "inflation_on": inflation_state in {"rising", "falling", "neutral"},
-                "regime": regime,
-                "selected_asset": ", ".join(weights),
-                "selected_assets": ", ".join(weights),
-                "target_weights": weights,
-                "previous_weights": previous_weights.copy(),
-                "previous_asset": ", ".join(previous_weights) if previous_weights else None,
-                "rebalance_required": rebalance_required,
-                "rebalance_reason": reason,
-                "trade": rebalance_required,
-            })
+            rows.append({"signal_date": date, **{f"{asset}_price": prices.loc[date, asset] for asset in self.data_assets}, "SPY_200d_sma": float(spy_sma.loc[date]), "t5yie_lag_date": current_date, "t5yie_lagged": current, "t5yie_three_month_date": comparison_date, "t5yie_three_month": comparison, "t5yie_80d_date": comparison_date, "t5yie_80d": comparison, "inflation_level": level, "raw_direction": raw_direction, "persisted_direction": stored_direction, "inflation_state": inflation_state, "growth_up": growth_up, "positive_basket_growth": float(positive_growth.loc[date]), "negative_basket_growth": float(negative_growth.loc[date]), "inflation_indicator": float(indicator.loc[date]), "indicator_80d_slope": slope, "breakeven_momentum": raw_direction == "rising", "asset_momentum": slope > 0, "inflation_on": inflation_state in {"rising", "falling", "neutral"}, "regime": regime, "selected_asset": ", ".join(weights), "selected_assets": ", ".join(weights), "target_weights": weights, "previous_weights": previous_weights.copy(), "previous_asset": ", ".join(previous_weights) if previous_weights else None, "rebalance_required": rebalance_required, "rebalance_reason": reason, "trade": rebalance_required})
             previous_weights = weights
             previous_direction = stored_direction
             previous_signal_date = date
