@@ -1,4 +1,4 @@
-"""Inflation Compass Steady: an 80-trading-day market-regime model."""
+"""Shared post-2003 T5YIE implementation for Inflation Compass variants."""
 from __future__ import annotations
 
 import numpy as np
@@ -7,10 +7,10 @@ import pandas as pd
 from ..constants import INFLATION_COMPASS_DATA_ASSETS, INFLATION_COMPASS_MARKET_ASSETS
 
 
-class InflationCompassSteady:
+class InflationCompassBase:
     """Monthly implementation of the post-2003 T5YIE Inflation Compass rules."""
 
-    name = "Inflation Compass Steady (80-day)"
+    name = "Inflation Compass"
     data_assets = INFLATION_COMPASS_DATA_ASSETS
     market_data_assets = INFLATION_COMPASS_MARKET_ASSETS
     signal_assets = INFLATION_COMPASS_DATA_ASSETS
@@ -27,7 +27,7 @@ class InflationCompassSteady:
     def decisions(self, daily_prices: pd.DataFrame) -> pd.DataFrame:
         missing = set(self.data_assets) - set(daily_prices.columns)
         if missing:
-            raise ValueError(f"Inflation Compass Steady is missing assets: {sorted(missing)}")
+            raise ValueError(f"{self.name} is missing assets: {sorted(missing)}")
         prices = daily_prices.loc[:, self.data_assets].sort_index()
         # FRED has observations on some Federal business days when NYSE ETFs
         # do not trade. Build every market indicator on the shared ETF trading
@@ -61,12 +61,12 @@ class InflationCompassSteady:
                 continue
             t5yie_date = available_fred.index[-1]
             t5yie_value = float(available_fred.iloc[-1])
-            t5yie_80_date = available_fred.index[-(self.momentum_window + 1)]
-            t5yie_80_value = float(available_fred.iloc[-(self.momentum_window + 1)])
+            t5yie_momentum_date = available_fred.index[-(self.momentum_window + 1)]
+            t5yie_momentum_value = float(available_fred.iloc[-(self.momentum_window + 1)])
             slope = float(np.polyfit(np.arange(self.momentum_window), indicator_window.to_numpy(), 1)[0])
             growth_up = bool(market.loc[date, "SPY"] > spy_sma.loc[date])
             inflation_level = t5yie_value > 2.0
-            breakeven_momentum = t5yie_value > t5yie_80_value
+            breakeven_momentum = t5yie_value > t5yie_momentum_value
             asset_momentum = slope > 0
             inflation_on = inflation_level and (breakeven_momentum or asset_momentum)
 
@@ -85,12 +85,15 @@ class InflationCompassSteady:
                 "SPY_200d_sma": float(spy_sma.loc[date]),
                 "t5yie_lag_date": t5yie_date,
                 "t5yie_lagged": t5yie_value,
-                "t5yie_80d_date": t5yie_80_date,
-                "t5yie_80d": t5yie_80_value,
+                "t5yie_momentum_date": t5yie_momentum_date,
+                "t5yie_momentum_value": t5yie_momentum_value,
                 "positive_basket_growth": float(positive_growth.loc[date]),
                 "negative_basket_growth": float(negative_growth.loc[date]),
                 "inflation_indicator": float(inflation_indicator.loc[date]),
-                "indicator_80d_slope": slope,
+                "indicator_momentum_slope": slope,
+                f"t5yie_{self.momentum_window}d_date": t5yie_momentum_date,
+                f"t5yie_{self.momentum_window}d": t5yie_momentum_value,
+                f"indicator_{self.momentum_window}d_slope": slope,
                 "growth_up": growth_up,
                 "inflation_level": inflation_level,
                 "breakeven_momentum": breakeven_momentum,
@@ -106,3 +109,24 @@ class InflationCompassSteady:
             })
             previous_weights = weights
         return pd.DataFrame(rows).set_index("signal_date") if rows else pd.DataFrame()
+
+
+class InflationCompassSteady(InflationCompassBase):
+    """The 80-trading-day Inflation Compass Steady variant."""
+
+    name = "Inflation Compass Steady (80-day)"
+    momentum_window = 80
+
+
+class InflationCompassStandard(InflationCompassBase):
+    """The published 60-trading-day Inflation Compass Standard variant."""
+
+    name = "Inflation Compass Standard"
+    momentum_window = 60
+
+
+class InflationCompassFast(InflationCompassBase):
+    """The 40-trading-day Inflation Compass Fast variant."""
+
+    name = "Inflation Compass Fast (40-day)"
+    momentum_window = 40

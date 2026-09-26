@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from haa.strategies import InflationCompassSteady
+from haa.strategies import InflationCompassFast, InflationCompassStandard, InflationCompassSteady
 
 
 ASSETS = ("SPY", "XLE", "XLK", "XLU", "XLP", "IEF", "XLI", "XLF", "XLB", "XLV", "T5YIE")
@@ -63,3 +63,34 @@ def test_indicator_uses_daily_rebalanced_returns_not_raw_prices():
     decision = InflationCompassSteady().decisions(daily_prices()).iloc[-1]
     assert decision["positive_basket_growth"] > decision["negative_basket_growth"]
     assert decision["indicator_80d_slope"] > 0
+
+
+def test_standard_uses_60_valid_trading_observations_for_both_confirmations():
+    prices = daily_prices()
+    prices.loc[prices.index[:-62], "T5YIE"] = np.nan
+    assert InflationCompassSteady().decisions(prices).empty
+    decision = InflationCompassStandard().decisions(prices).iloc[-1]
+    assert decision["t5yie_60d_date"] == prices["T5YIE"].dropna().index[0]
+    assert decision["indicator_60d_slope"] > 0
+
+
+def test_standard_and_steady_agree_when_both_windows_confirm_the_same_regime():
+    prices = daily_prices()
+    standard = InflationCompassStandard().decisions(prices).iloc[-1]
+    steady = InflationCompassSteady().decisions(prices).iloc[-1]
+    assert standard["target_weights"] == steady["target_weights"] == {"XLE": 1.0}
+
+
+def test_fast_uses_40_valid_trading_observations_for_both_confirmations():
+    prices = daily_prices()
+    prices.loc[prices.index[:-42], "T5YIE"] = np.nan
+    assert InflationCompassStandard().decisions(prices).empty
+    decision = InflationCompassFast().decisions(prices).iloc[-1]
+    assert decision["t5yie_40d_date"] == prices["T5YIE"].dropna().index[0]
+    assert decision["indicator_40d_slope"] > 0
+
+
+def test_fast_standard_and_steady_agree_when_all_windows_confirm_the_same_regime():
+    prices = daily_prices()
+    decisions = [model().decisions(prices).iloc[-1] for model in (InflationCompassFast, InflationCompassStandard, InflationCompassSteady)]
+    assert [decision["target_weights"] for decision in decisions] == [{"XLE": 1.0}] * 3
