@@ -98,7 +98,26 @@ st.markdown("""
 }
 @media (max-width: 640px) {
   .block-container { padding: 0.6rem 0.75rem 1.5rem !important; }
-  .st-key-primary-navigation { margin-top: 2.4rem; }
+  .st-key-primary-navigation {
+    width: 100%;
+    margin-top: 2.4rem;
+    padding: 0.25rem;
+  }
+  .st-key-primary-navigation [data-testid="stRadio"] > div {
+    display: flex;
+    flex-flow: row nowrap;
+    width: 100%;
+    gap: 0.1rem;
+  }
+  .st-key-primary-navigation label {
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: center;
+    padding: 0.3rem 0.08rem;
+    font-size: clamp(0.62rem, 2.8vw, 0.8rem);
+    line-height: 1.1;
+    white-space: nowrap;
+  }
   [data-testid="stDataFrame"] { max-width: 100%; overflow-x: auto; }
   .st-key-user-settings { right: 8.35rem; }
 }
