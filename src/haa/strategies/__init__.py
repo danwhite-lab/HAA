@@ -1,6 +1,7 @@
 from .haa_4 import HAA4
 from .haa_4_leveraged_2x import HAA4Leveraged2x
-from .inflation_compass_steady import InflationCompassSteady, InflationCompassPlus, InflationCompassPlusDriftBands
+from .inflation_compass_steady import InflationCompassSteady
+from .inflation_compass_plus import InflationCompassPlus, InflationCompassPlusDriftBands
 from .haa_classic_no_qqq import HAAClassicNoQQQ
 from .haa_classic_leveraged_no_qqq import HAAClassicLeveragedNoQQQ
 from .haa_simple import HAASimple
