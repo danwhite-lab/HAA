@@ -1,4 +1,4 @@
-# HAA-Simple
+# TAA Signals
 
 A deliberately small, auditable Streamlit backtester for defined HAA variants. It implements no optimization, parameter sweeps, or synthetic data.
 
