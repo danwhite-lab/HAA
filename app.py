@@ -15,6 +15,7 @@ from haa.data import combine_replacements, common_monthly_period, date_ranges, d
 from haa.engine import run_backtest
 from haa.metrics import annual_returns, performance_metrics
 from haa.model_catalog import MODEL_CATALOG, definition_for_label, implementations, resolve, strategies as catalog_strategies, variants
+from haa.portfolio import aggregate_holdings, total_weight
 from haa.signals import first_trading_day_after, latest_actionable_signal
 from haa.strategies import HAA4, HAA4Leveraged2x, HAAClassicLeveragedNoQQQ, HAAClassicNoQQQ, HAASimple, HAASimpleIsrael, HAASimpleLeveraged2x, InflationCompassSteady
 from haa.tase_data import TASE_ISRAEL_ASSET_IDS, TaseDataError, download_tase_israel_prices
@@ -166,6 +167,8 @@ for key, value in {
     "compare_tax_enabled": False,
     "compare_tax_rate": DEFAULT_TAX_RATE,
     "uploaded_replacements": {},
+    "portfolio_sleeves": [{"id": 1, "weight": 100.0, "model": DEFAULT_MODEL}],
+    "portfolio_next_id": 2,
 }.items():
     st.session_state.setdefault(key, value)
 seed_model_selection("signals", st.session_state["signals_model_name"])
@@ -180,7 +183,7 @@ if st.session_state["page"] == "Compare Models":
 st.session_state["ticker_text"] = append_missing_default_tickers(st.session_state["ticker_text"])
 
 with st.container(key="primary-navigation"):
-    page = st.radio("Primary navigation", ("Signals", "Backtest", "Compare", "Rules"), horizontal=True, label_visibility="collapsed", key="page")
+    page = st.radio("Primary navigation", ("Signals", "Portfolio", "Backtest", "Compare", "Rules"), horizontal=True, label_visibility="collapsed", key="page")
 title_column = st.container()
 
 # This fixed popover extends Streamlit's toolbar with the settings that belong
@@ -395,6 +398,100 @@ if page == "Backtest":
         monthly_returns[after_tax_label] = result.monthly["after_tax_monthly_return"]
     monthly_returns[benchmark_label] = result.monthly["benchmark_monthly_return"]
     st.dataframe(monthly_returns.style.format("{:.2%}"), use_container_width=True)
+
+
+def current_portfolio_signal(model_label: str):
+    """Reuse a model's normal signal path and return its executable weights."""
+    sleeve_strategy = MODEL_OPTIONS[model_label]()
+    sleeve_assets = getattr(sleeve_strategy, "data_assets", ASSETS)
+    sleeve_prices = all_prices.loc[:, sleeve_assets]
+    sleeve_market_assets = getattr(sleeve_strategy, "market_data_assets", sleeve_assets)
+    sleeve_monthly = to_month_end(sleeve_prices.loc[:, list(sleeve_market_assets)])
+    sleeve_decision_prices = sleeve_prices if getattr(sleeve_strategy, "uses_daily_signals", False) else sleeve_monthly
+    status = latest_actionable_signal(sleeve_strategy.decisions(sleeve_decision_prices), sleeve_monthly, sleeve_market_assets)
+    if status.decision is None:
+        return None, status.reason
+    decision = status.decision
+    weights = decision.get("target_weights", {decision["selected_asset"]: 1.0})
+    return {"decision": decision, "weights": dict(weights), "strategy": sleeve_strategy}, None
+
+
+if page == "Portfolio":
+    title_column.title("Portfolio")
+    title_column.caption("Combine existing actionable strategy signals into a reporting-currency allocation. No FX conversion, prices, or trade execution is included.")
+    amount_column, currency_column = st.columns([2, 1])
+    with amount_column:
+        amount_options = {"value": 100_000.0} if "portfolio_amount" not in st.session_state else {}
+        portfolio_amount = st.number_input("Total amount invested", min_value=0.01, step=1_000.0, key="portfolio_amount", **amount_options)
+    with currency_column:
+        if st.session_state.get("portfolio_currency") not in ("USD", "ILS"):
+            st.session_state["portfolio_currency"] = "USD"
+        portfolio_currency = st.selectbox("Reporting currency", ("USD", "ILS"), key="portfolio_currency")
+
+    sleeves = st.session_state["portfolio_sleeves"]
+    st.subheader("Strategy sleeves")
+    updated_sleeves = []
+    for sleeve in sleeves:
+        sleeve_id = sleeve["id"]
+        prefix = f"portfolio_{sleeve_id}"
+        previous_model = sleeve.get("model", st.session_state.get(f"{prefix}_model", DEFAULT_MODEL))
+        seed_model_selection(prefix, previous_model)
+        with st.expander(f"{previous_model} · {sleeve['weight']:.1f}%", expanded=True):
+            weight_column, remove_column = st.columns([1, 1])
+            with weight_column:
+                weight = st.number_input("Weight (%)", min_value=0.0, max_value=100.0, step=1.0, value=float(sleeve["weight"]), key=f"{prefix}_weight")
+            with remove_column:
+                if st.button("Remove", key=f"{prefix}_remove", disabled=len(sleeves) == 1):
+                    st.session_state["portfolio_sleeves"] = [item for item in sleeves if item["id"] != sleeve_id]
+                    st.rerun()
+            model_label = model_selector(prefix)
+            st.session_state[f"{prefix}_model"] = model_label
+            updated_sleeves.append({"id": sleeve_id, "weight": float(weight), "model": model_label})
+    st.session_state["portfolio_sleeves"] = updated_sleeves
+    if st.button("Add sleeve", key="portfolio_add_sleeve"):
+        next_id = st.session_state["portfolio_next_id"]
+        st.session_state["portfolio_next_id"] = next_id + 1
+        st.session_state["portfolio_sleeves"].append({"id": next_id, "weight": 0.0, "model": DEFAULT_MODEL})
+        st.rerun()
+
+    sleeve_total = total_weight(updated_sleeves)
+    if abs(sleeve_total - 100.0) > 1e-9:
+        st.warning(f"Sleeve weights total {sleeve_total:.2f}%. Set them to exactly 100% before using the combined allocation.")
+    else:
+        st.success("Sleeve weights total 100%.")
+
+    sleeve_rows, valid_sleeves = [], []
+    for sleeve in updated_sleeves:
+        definition = definition_for_label(sleeve["model"])
+        signal, error = current_portfolio_signal(sleeve["model"])
+        base_row = {
+            "Sleeve": sleeve["model"], "Strategy": definition.strategy, "Variant": definition.variant,
+            "Implementation": definition.implementation, "Weight": sleeve["weight"] / 100,
+            f"Allocation ({portfolio_currency})": portfolio_amount * sleeve["weight"] / 100,
+        }
+        if error:
+            base_row.update({"Current signal": "Unavailable", "Status": error})
+        else:
+            target = ", ".join(f"{asset} {weight:.0%}" for asset, weight in signal["weights"].items())
+            base_row.update({"Current signal": target, "Status": f"Ready · {signal['decision']['regime']}"})
+            valid_sleeves.append({"name": sleeve["model"], "weight": sleeve["weight"], "target_weights": signal["weights"]})
+        sleeve_rows.append(base_row)
+    st.subheader("Current sleeve signals")
+    sleeve_table = pd.DataFrame(sleeve_rows)
+    st.dataframe(sleeve_table.style.format({"Weight": "{:.2%}", f"Allocation ({portfolio_currency})": "{:,.2f}"}), use_container_width=True, hide_index=True)
+
+    st.subheader("Combined actionable holdings")
+    if len(valid_sleeves) != len(updated_sleeves):
+        st.info("Combined holdings are unavailable until every sleeve has a valid current signal.")
+    elif abs(sleeve_total - 100.0) > 1e-9:
+        st.info("Combined holdings are unavailable until sleeve weights total exactly 100%.")
+    else:
+        holdings = aggregate_holdings(valid_sleeves)
+        holding_rows = [
+            {"Holding": asset, "Combined weight": values["weight"], f"Allocation ({portfolio_currency})": portfolio_amount * values["weight"], "Contributing sleeves": ", ".join(values["sleeves"])}
+            for asset, values in sorted(holdings.items())
+        ]
+        st.dataframe(pd.DataFrame(holding_rows).style.format({"Combined weight": "{:.2%}", f"Allocation ({portfolio_currency})": "{:,.2f}"}), use_container_width=True, hide_index=True)
 
 if page == "Compare":
     title_column.title("Compare")
