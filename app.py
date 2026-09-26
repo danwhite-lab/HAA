@@ -50,7 +50,7 @@ ALL_MODEL_ASSETS = tuple(dict.fromkeys(asset for model_class in MODEL_OPTIONS.va
 TASE_ASSETS = tuple(asset for asset in ISRAEL_SIMPLE_ASSETS if asset != "TIP")
 YAHOO_ASSETS = tuple(asset for asset in ALL_MODEL_ASSETS if asset not in (*TASE_ASSETS, *FRED_ASSETS))
 
-st.set_page_config(page_title="HAA Backtest", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="TAA Signals", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
 <style>
 .block-container { padding-top: 0.8rem !important; }
