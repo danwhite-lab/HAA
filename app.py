@@ -72,6 +72,21 @@ st.markdown("""
   border-radius: 0.65rem;
   background: rgba(250, 250, 252, 0.58);
 }
+.st-key-portfolio-investment-settings {
+  max-width: 38rem;
+  margin: 0.25rem 0 1rem;
+}
+.st-key-portfolio-sleeve-heading [data-testid="stHorizontalBlock"] {
+  align-items: end;
+  gap: 0.25rem;
+}
+.st-key-portfolio-sleeve-heading h3 { margin-bottom: 0; }
+.st-key-portfolio-sleeve-heading [data-testid="stButton"] > button {
+  min-width: 2rem;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+}
 /* Keep the app's preferences control visually aligned with Streamlit's
    fixed toolbar rather than treating it as page content. */
 .st-key-user-settings {
@@ -133,20 +148,36 @@ st.markdown("""
     min-width: 100% !important;
     width: 100% !important;
   }
-  [class*="st-key-portfolio_"][class*="-sleeve-row"] [data-testid="stColumn"]:nth-child(-n+3) {
+  [class*="st-key-portfolio_"][class*="-sleeve-row"] [data-testid="stColumn"]:nth-child(-n+2) {
     flex: 1 1 calc(50% - 0.35rem) !important;
     min-width: calc(50% - 0.35rem) !important;
     width: calc(50% - 0.35rem) !important;
   }
-  [class*="st-key-portfolio_"][class*="-sleeve-row"] [data-testid="stColumn"]:nth-child(4) {
-    flex: 1 1 calc(100% - 3rem) !important;
-    min-width: calc(100% - 3rem) !important;
-    width: calc(100% - 3rem) !important;
+  [class*="st-key-portfolio_"][class*="-sleeve-row"] [data-testid="stColumn"]:nth-child(3) {
+    flex: 1 1 calc(60% - 0.35rem) !important;
+    min-width: calc(60% - 0.35rem) !important;
+    width: calc(60% - 0.35rem) !important;
   }
-  [class*="st-key-portfolio_"][class*="-sleeve-row"] [data-testid="stColumn"]:nth-child(5) {
-    flex: 0 0 2.5rem !important;
-    min-width: 2.5rem !important;
-    width: 2.5rem !important;
+  [class*="st-key-portfolio_"][class*="-sleeve-row"] [data-testid="stColumn"]:nth-child(4) {
+    flex: 1 1 calc(40% - 0.35rem) !important;
+    min-width: calc(40% - 0.35rem) !important;
+    width: calc(40% - 0.35rem) !important;
+  }
+  .st-key-portfolio-sleeve-heading [data-testid="stColumn"]:nth-child(1) {
+    flex: 0 1 auto !important;
+    min-width: 0 !important;
+    width: auto !important;
+  }
+  .st-key-portfolio-sleeve-heading [data-testid="stColumn"]:nth-child(2),
+  .st-key-portfolio-sleeve-heading [data-testid="stColumn"]:nth-child(3) {
+    flex: 0 0 2rem !important;
+    min-width: 2rem !important;
+    width: 2rem !important;
+  }
+  .st-key-portfolio-sleeve-heading [data-testid="stColumn"]:nth-child(4) {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    width: auto !important;
   }
   [data-testid="stDataFrame"] { max-width: 100%; overflow-x: auto; }
   .st-key-user-settings { right: 8.35rem; }
@@ -165,7 +196,7 @@ def seed_model_selection(prefix: str, label: str) -> None:
     st.session_state.setdefault(f"{prefix}_implementation", definition.implementation)
 
 
-def model_selector(prefix: str, heading: str | None = None, columns=None) -> str:
+def model_selector(prefix: str, heading: str | None = None, columns=None, implementation_dropdown: bool = False) -> str:
     if heading:
         st.subheader(heading)
     strategy_key, variant_key, implementation_key = (f"{prefix}_{name}" for name in ("strategy", "variant", "implementation"))
@@ -182,7 +213,10 @@ def model_selector(prefix: str, heading: str | None = None, columns=None) -> str
             available_implementations = implementations(selected_strategy, selected_variant)
             if st.session_state.get(implementation_key) not in available_implementations:
                 st.session_state[implementation_key] = available_implementations[0]
-            st.segmented_control("Implementation", available_implementations, default=st.session_state[implementation_key], key=implementation_key, selection_mode="single")
+            if implementation_dropdown:
+                st.selectbox("Implementation", available_implementations, key=implementation_key)
+            else:
+                st.segmented_control("Implementation", available_implementations, default=st.session_state[implementation_key], key=implementation_key, selection_mode="single")
     else:
         strategy_column, variant_column, implementation_column = columns
         with strategy_column:
@@ -196,7 +230,10 @@ def model_selector(prefix: str, heading: str | None = None, columns=None) -> str
         if st.session_state.get(implementation_key) not in available_implementations:
             st.session_state[implementation_key] = available_implementations[0]
         with implementation_column:
-            st.segmented_control("Implementation", available_implementations, default=st.session_state[implementation_key], key=implementation_key, selection_mode="single")
+            if implementation_dropdown:
+                st.selectbox("Implementation", available_implementations, key=implementation_key)
+            else:
+                st.segmented_control("Implementation", available_implementations, default=st.session_state[implementation_key], key=implementation_key, selection_mode="single")
     return resolve(selected_strategy, selected_variant, st.session_state[implementation_key]).label
 
 
@@ -489,21 +526,25 @@ def current_portfolio_signal(model_label: str):
 if page == "Portfolio":
     title_column.title("Portfolio")
     title_column.caption("Combine existing actionable strategy signals into a reporting-currency allocation. No FX conversion, prices, or trade execution is included.")
-    amount_column, currency_column = st.columns([2, 1])
-    with amount_column:
-        amount_options = {"value": 100_000.0} if "portfolio_amount" not in st.session_state else {}
-        portfolio_amount = st.number_input("Total amount invested", min_value=0.01, step=1_000.0, key="portfolio_amount", **amount_options)
-    with currency_column:
-        if st.session_state.get("portfolio_currency") not in ("USD", "ILS"):
-            st.session_state["portfolio_currency"] = "USD"
-        portfolio_currency = st.selectbox("Reporting currency", ("USD", "ILS"), key="portfolio_currency")
+    with st.container(key="portfolio-investment-settings"):
+        amount_column, currency_column = st.columns(2)
+        with amount_column:
+            amount_options = {"value": 100_000.0} if "portfolio_amount" not in st.session_state else {}
+            portfolio_amount = st.number_input("Total amount invested", min_value=0.01, step=1_000.0, key="portfolio_amount", **amount_options)
+        with currency_column:
+            if st.session_state.get("portfolio_currency") not in ("USD", "ILS"):
+                st.session_state["portfolio_currency"] = "USD"
+            portfolio_currency = st.selectbox("Reporting currency", ("USD", "ILS"), key="portfolio_currency")
 
     sleeves = st.session_state["portfolio_sleeves"]
-    sleeve_title_column, sleeve_add_column = st.columns([12, 1])
-    with sleeve_title_column:
-        st.subheader("Strategy sleeves")
-    with sleeve_add_column:
-        add_sleeve = st.button("＋", key="portfolio_add_sleeve", help="Add sleeve")
+    with st.container(key="portfolio-sleeve-heading"):
+        sleeve_title_column, sleeve_add_column, sleeve_remove_column, sleeve_spacer = st.columns([2.4, 0.35, 0.35, 9])
+        with sleeve_title_column:
+            st.subheader("Strategy sleeves")
+        with sleeve_add_column:
+            add_sleeve = st.button("＋", key="portfolio_add_sleeve", help="Add sleeve")
+        with sleeve_remove_column:
+            remove_sleeve = st.button("−", key="portfolio_remove_sleeve", help="Remove the last sleeve", disabled=len(sleeves) == 1)
     updated_sleeves = []
     for sleeve in sleeves:
         sleeve_id = sleeve["id"]
@@ -511,14 +552,10 @@ if page == "Portfolio":
         previous_model = sleeve.get("model", st.session_state.get(f"{prefix}_model", DEFAULT_MODEL))
         seed_model_selection(prefix, previous_model)
         with st.container(key=f"{prefix}-sleeve-row"):
-            strategy_column, variant_column, implementation_column, weight_column, remove_column = st.columns([1.1, 1.25, 1.45, 0.65, 0.25])
-            model_label = model_selector(prefix, columns=(strategy_column, variant_column, implementation_column))
+            strategy_column, variant_column, implementation_column, weight_column = st.columns([1.1, 1.25, 1.45, 0.65])
+            model_label = model_selector(prefix, columns=(strategy_column, variant_column, implementation_column), implementation_dropdown=True)
             with weight_column:
                 weight = st.number_input("Weight (%)", min_value=0.0, max_value=100.0, step=1.0, value=float(sleeve["weight"]), key=f"{prefix}_weight")
-            with remove_column:
-                if st.button("−", key=f"{prefix}_remove", help="Remove sleeve", disabled=len(sleeves) == 1):
-                    st.session_state["portfolio_sleeves"] = [item for item in sleeves if item["id"] != sleeve_id]
-                    st.rerun()
             st.session_state[f"{prefix}_model"] = model_label
             updated_sleeves.append({"id": sleeve_id, "weight": float(weight), "model": model_label})
     st.session_state["portfolio_sleeves"] = updated_sleeves
@@ -526,6 +563,9 @@ if page == "Portfolio":
         next_id = st.session_state["portfolio_next_id"]
         st.session_state["portfolio_next_id"] = next_id + 1
         st.session_state["portfolio_sleeves"].append({"id": next_id, "weight": 0.0, "model": DEFAULT_MODEL})
+        st.rerun()
+    if remove_sleeve:
+        st.session_state["portfolio_sleeves"] = updated_sleeves[:-1]
         st.rerun()
 
     sleeve_total = total_weight(updated_sleeves)
@@ -684,7 +724,7 @@ if page == "Compare":
 
 if page == "Signals":
     with st.container(key="signals-model-selector"):
-        signal_model_name = model_selector("signals", columns=st.columns([1.1, 1.25, 1.45]))
+        signal_model_name = model_selector("signals", columns=st.columns([1.1, 1.25, 1.45]), implementation_dropdown=True)
     st.session_state["signals_model_name"] = signal_model_name
     signal_strategy = MODEL_OPTIONS[signal_model_name]()
     signal_data_assets = getattr(signal_strategy, "data_assets", ASSETS)
