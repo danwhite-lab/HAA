@@ -1,0 +1,63 @@
+"""Authoritative UI catalogue for the app's existing stable implementations."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from .strategies import (
+    HAA4,
+    HAA4Leveraged2x,
+    HAAClassicLeveragedNoQQQ,
+    HAAClassicNoQQQ,
+    HAASimple,
+    HAASimpleIsrael,
+    HAASimpleLeveraged2x,
+    InflationCompassSteady,
+)
+
+
+@dataclass(frozen=True)
+class ModelDefinition:
+    strategy: str
+    variant: str
+    implementation: str
+    label: str
+    model_class: type
+
+
+MODEL_CATALOG: tuple[ModelDefinition, ...] = (
+    ModelDefinition("HAA", "Simple", "Original", "HAA-Simple", HAASimple),
+    ModelDefinition("HAA", "Simple", "Israel", "HAA-Simple Israel", HAASimpleIsrael),
+    ModelDefinition("HAA", "Simple Leveraged 2x", "Original", "HAA-Simple Leveraged 2x (SSO)", HAASimpleLeveraged2x),
+    ModelDefinition("HAA", "HAA 4", "Original", "HAA 4", HAA4),
+    ModelDefinition("HAA", "HAA 4 Leveraged 2x", "Original", "HAA 4 Leveraged 2x", HAA4Leveraged2x),
+    ModelDefinition("HAA", "Classic (No QQQ)", "Original", "HAA Classic (No QQQ)", HAAClassicNoQQQ),
+    ModelDefinition("HAA", "Classic Leveraged 2x (No QQQ)", "Original", "HAA Classic Leveraged 2x (No QQQ)", HAAClassicLeveragedNoQQQ),
+    ModelDefinition("Inflation Compass", "Steady (80-day)", "Original", "Inflation Compass Steady (80-day)", InflationCompassSteady),
+)
+
+
+def strategies() -> tuple[str, ...]:
+    return tuple(dict.fromkeys(item.strategy for item in MODEL_CATALOG))
+
+
+def variants(strategy: str) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(item.variant for item in MODEL_CATALOG if item.strategy == strategy))
+
+
+def implementations(strategy: str, variant: str) -> tuple[str, ...]:
+    return tuple(item.implementation for item in MODEL_CATALOG if item.strategy == strategy and item.variant == variant)
+
+
+def resolve(strategy: str, variant: str, implementation: str) -> ModelDefinition:
+    for item in MODEL_CATALOG:
+        if (item.strategy, item.variant, item.implementation) == (strategy, variant, implementation):
+            return item
+    raise ValueError(f"Unknown model selection: {strategy} / {variant} / {implementation}")
+
+
+def definition_for_label(label: str) -> ModelDefinition:
+    for item in MODEL_CATALOG:
+        if item.label == label:
+            return item
+    raise ValueError(f"Unknown model label: {label}")
