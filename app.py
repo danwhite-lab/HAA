@@ -14,20 +14,12 @@ from haa.comparison import ModelInput, compare_models
 from haa.data import combine_replacements, common_monthly_period, date_ranges, default_ticker_map, download_fred_series, download_yahoo_prices, parse_ticker_map, read_uploaded_csv, to_month_end, upload_asset_from_filename
 from haa.engine import run_backtest
 from haa.metrics import annual_returns, performance_metrics
+from haa.model_catalog import MODEL_CATALOG, definition_for_label, implementations, resolve, strategies as catalog_strategies, variants
 from haa.signals import first_trading_day_after, latest_actionable_signal
 from haa.strategies import HAA4, HAA4Leveraged2x, HAAClassicLeveragedNoQQQ, HAAClassicNoQQQ, HAASimple, HAASimpleIsrael, HAASimpleLeveraged2x, InflationCompassSteady
 from haa.tase_data import TASE_ISRAEL_ASSET_IDS, TaseDataError, download_tase_israel_prices
 
-MODEL_OPTIONS = {
-    "HAA-Simple": HAASimple,
-    "HAA 4": HAA4,
-    "HAA 4 Leveraged 2x": HAA4Leveraged2x,
-    "Inflation Compass Steady (80-day)": InflationCompassSteady,
-    "HAA-Simple Leveraged 2x (SSO)": HAASimpleLeveraged2x,
-    "HAA-Simple Israel": HAASimpleIsrael,
-    "HAA Classic (No QQQ)": HAAClassicNoQQQ,
-    "HAA Classic Leveraged 2x (No QQQ)": HAAClassicLeveragedNoQQQ,
-}
+MODEL_OPTIONS = {item.label: item.model_class for item in MODEL_CATALOG}
 MODEL_RULES = {
     "HAA-Simple": """**HAA-Simple:** At each month-end, calculate equal-weighted 13612U momentum for SPY and TIP. If both are strictly positive, hold 100% SPY. Otherwise, compare IEF and BIL 13612U momentum and hold 100% of the higher-momentum asset. The decision earns the following month's return only.""",
     "HAA 4": """**HAA 4:** TIP is the sole canary. If TIP's equal-weighted 13612U momentum is zero or negative, hold 100% of the higher-momentum asset from IEF and BIL. If TIP is strictly positive, rank SPY, VEA, VNQ, and IEF by 13612U and select the top two at 50% each. Then replace each selected asset whose own momentum is zero or negative with the higher-momentum IEF/BIL defensive asset. This can produce a mixed offensive/defensive allocation. IEF is eligible in both universes.""",
@@ -54,15 +46,24 @@ st.set_page_config(page_title="TAA Signals", layout="wide", initial_sidebar_stat
 st.markdown("""
 <style>
 .block-container { padding-top: 0.8rem !important; }
-.st-key-header-row { padding-top: 2.35rem !important; }
-.st-key-header-row [data-testid="stHorizontalBlock"] {
-  flex-wrap: nowrap !important;
-  align-items: flex-start !important;
+.st-key-primary-navigation {
+  margin: 2.65rem 0 1.2rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid rgba(49, 51, 63, 0.14);
+  border-radius: 0.65rem;
+  background: rgba(250, 250, 252, 0.72);
 }
-.st-key-header-row [data-testid="column"]:last-child {
-  flex: 0 0 3rem !important;
-  width: 3rem !important;
-  min-width: 3rem !important;
+.st-key-primary-navigation [data-testid="stRadio"] > div { gap: 0.25rem; }
+.st-key-primary-navigation label { margin: 0; padding: 0.35rem 0.7rem; border-radius: 0.4rem; }
+.st-key-signals-model-selector,
+.st-key-backtest-model-selector,
+.st-key-rules-model-selector,
+.st-key-backtest-configuration {
+  margin: 0.25rem 0 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(49, 51, 63, 0.12);
+  border-radius: 0.65rem;
+  background: rgba(250, 250, 252, 0.58);
 }
 /* Keep the app's preferences control visually aligned with Streamlit's
    fixed toolbar rather than treating it as page content. */
@@ -90,6 +91,7 @@ st.markdown("""
 }
 @media (max-width: 640px) {
   .block-container { padding: 0.6rem 0.75rem 1.5rem !important; }
+  .st-key-primary-navigation { margin-top: 2.4rem; }
   [data-testid="stDataFrame"] { max-width: 100%; overflow-x: auto; }
   .st-key-user-settings { right: 8.35rem; }
 }
@@ -98,6 +100,33 @@ st.markdown("""
 
 DEFAULT_TICKERS = "\n".join(f"{role}={ticker}" for role, ticker in default_ticker_map(YAHOO_ASSETS).items())
 DEFAULT_MODEL = "HAA-Simple"
+
+
+def seed_model_selection(prefix: str, label: str) -> None:
+    definition = definition_for_label(label)
+    st.session_state.setdefault(f"{prefix}_strategy", definition.strategy)
+    st.session_state.setdefault(f"{prefix}_variant", definition.variant)
+    st.session_state.setdefault(f"{prefix}_implementation", definition.implementation)
+
+
+def model_selector(prefix: str, heading: str | None = None) -> str:
+    if heading:
+        st.subheader(heading)
+    with st.container(key=f"{prefix}-model-selector"):
+        strategy_key, variant_key, implementation_key = (f"{prefix}_{name}" for name in ("strategy", "variant", "implementation"))
+        available_strategies = catalog_strategies()
+        if st.session_state.get(strategy_key) not in available_strategies:
+            st.session_state[strategy_key] = available_strategies[0]
+        selected_strategy = st.selectbox("Strategy", available_strategies, key=strategy_key)
+        available_variants = variants(selected_strategy)
+        if st.session_state.get(variant_key) not in available_variants:
+            st.session_state[variant_key] = available_variants[0]
+        selected_variant = st.selectbox("Variant", available_variants, key=variant_key)
+        available_implementations = implementations(selected_strategy, selected_variant)
+        if st.session_state.get(implementation_key) not in available_implementations:
+            st.session_state[implementation_key] = available_implementations[0]
+        st.segmented_control("Implementation", available_implementations, default=st.session_state[implementation_key], key=implementation_key, selection_mode="single")
+        return resolve(selected_strategy, selected_variant, st.session_state[implementation_key]).label
 
 
 def execution_assets(decision: pd.Series, benchmark_asset: str) -> tuple[str, ...]:
@@ -139,21 +168,20 @@ for key, value in {
     "uploaded_replacements": {},
 }.items():
     st.session_state.setdefault(key, value)
+seed_model_selection("signals", st.session_state["signals_model_name"])
+seed_model_selection("backtest", st.session_state["model_name"])
+seed_model_selection("rules", st.session_state["model_name"])
 st.session_state.setdefault("settings_cost_pct", st.session_state["cost_pct"] * 100)
 st.session_state.setdefault("settings_tax_rate", st.session_state["tax_rate"] * 100)
 if st.session_state["page"] == "Validation":
     st.session_state["page"] = "Rules"
+if st.session_state["page"] == "Compare Models":
+    st.session_state["page"] = "Compare"
 st.session_state["ticker_text"] = append_missing_default_tickers(st.session_state["ticker_text"])
 
-# Keep the primary signal uncluttered. The compact menu holds navigation and,
-# on Signals, the model chooser; data-source controls remain Backtest-only.
-with st.container(key="header-row"):
-    title_column, menu_column = st.columns([12, 1])
-    with menu_column:
-        with st.popover("⋮", help="Navigation and signal model"):
-            page = st.radio("View", ("Signals", "Backtest", "Compare Models", "Rules"), key="page")
-            if page == "Signals":
-                st.selectbox("Signal model", tuple(MODEL_OPTIONS), key="signals_model_name", help="This selector controls the Signals page only; it does not change the Backtest configuration.")
+with st.container(key="primary-navigation"):
+    page = st.radio("Primary navigation", ("Signals", "Backtest", "Compare", "Rules"), horizontal=True, label_visibility="collapsed", key="page")
+title_column = st.container()
 
 # This fixed popover extends Streamlit's toolbar with the settings that belong
 # to an individual user's backtest.  Comparison controls intentionally remain
@@ -161,10 +189,10 @@ with st.container(key="header-row"):
 with st.container(key="user-settings"):
     with st.popover("⚙", help="User settings"):
         st.subheader("User settings")
-        st.caption("These defaults apply to the Backtest page. Compare Models has its own configuration.")
+        st.caption("These defaults apply to the Backtest page. Compare has its own configuration.")
         st.number_input("Initial investment", min_value=1.0, key="initial", step=1_000.0)
         st.number_input("Transaction cost per entry/change (%)", min_value=0.0, max_value=10.0, step=0.01, key="settings_cost_pct")
-        st.caption("Data sources and replacement CSV files are managed in the Backtest sidebar.")
+        st.caption("Data sources and replacement CSV files are managed in Backtest configuration.")
 
 st.session_state["cost_pct"] = st.session_state["settings_cost_pct"] / 100
 st.session_state["tax_rate"] = st.session_state["settings_tax_rate"] / 100
@@ -176,16 +204,22 @@ cost_pct = st.session_state["cost_pct"]
 tax_enabled = st.session_state["tax_enabled"]
 tax_rate = st.session_state["tax_rate"]
 uploads = []
+backtest_configuration = None
 
 if page == "Backtest":
-    with st.sidebar:
-        st.header("Backtest data")
-        model_name = st.selectbox("Backtest model", tuple(MODEL_OPTIONS), key="model_name")
+    backtest_configuration = st.container(key="backtest-configuration")
+    with backtest_configuration:
+        st.header("Backtest configuration")
+        model_name = model_selector("backtest", "Model")
+        st.session_state["model_name"] = model_name
         st.toggle("Israeli capital-gains tax", key="tax_enabled")
         st.number_input("Tax rate (%)", min_value=0.0, max_value=100.0, step=0.1, disabled=not st.session_state["tax_enabled"], key="settings_tax_rate")
         ticker_text = st.text_area("Yahoo Finance ticker sources", value=ticker_text, help="One asset role per line. Israeli roles CSPX_IL, IEF_IL, and AYALON_KASPIT always use public TASE/Maya data via tasekit; TIP and all other roles use Yahoo Finance.")
         uploads = st.file_uploader("Upload replacement CSV files", type="csv", accept_multiple_files=True, help=f"Upload one or more files named with one valid asset: {', '.join(ALL_MODEL_ASSETS)}.")
     st.session_state["ticker_text"] = ticker_text
+
+if page == "Rules":
+    model_name = model_selector("rules", "Choose model")
 
 strategy = MODEL_OPTIONS[model_name]()
 data_assets = getattr(strategy, "data_assets", ASSETS)
@@ -195,7 +229,7 @@ benchmark_label = f"{benchmark_asset} buy-and-hold"
 try:
     ticker_map = parse_ticker_map(ticker_text, YAHOO_ASSETS)
 except (ValueError, TypeError) as exc:
-    st.sidebar.error(str(exc))
+    st.error(str(exc))
     st.stop()
 
 @st.cache_data(ttl=3600, show_spinner="Downloading Yahoo Finance price history...")
@@ -250,7 +284,7 @@ if page == "Backtest":
                 raise ValueError(f"More than one upload targets {asset}; upload only one replacement file per canonical role.")
             replacements[asset] = read_uploaded_csv(upload.getvalue(), asset)
         except ValueError as exc:
-            st.sidebar.error(str(exc))
+            st.error(str(exc))
     st.session_state["uploaded_replacements"] = replacements
 downloaded_all = downloaded.join(tase_prices, how="outer").join(fred_prices, how="outer")
 all_prices = combine_replacements(downloaded_all, replacements, ALL_MODEL_ASSETS)
@@ -290,7 +324,7 @@ end = min(max(end, common_start.date()), execution_end_limit)
 if start > end:
     start = common_start.date()
 if page == "Backtest":
-    with st.sidebar:
+    with backtest_configuration:
         st.caption(f"Common monthly data: {common_start.date()} to {common_end.date()}")
         with st.expander("Data & validation"):
             st.caption("Available adjusted-price history for the assets required by the selected model.")
@@ -319,7 +353,7 @@ numeric_rows = ["Final value", "Allocation changes", "Average changes/year"]
 
 if page == "Backtest":
     title_column.title(strategy.name)
-    st.caption("The sidebar configures this backtest only.")
+    st.caption("These settings configure this backtest only.")
     st.caption("Signals are evaluated at month-end and execute for the following holding period; no optimization or synthetic history.")
     if hasattr(strategy, "risk_warning"):
         st.warning(strategy.risk_warning)
@@ -362,8 +396,8 @@ if page == "Backtest":
     monthly_returns[benchmark_label] = result.monthly["benchmark_monthly_return"]
     st.dataframe(monthly_returns.style.format("{:.2%}"), use_container_width=True)
 
-if page == "Compare Models":
-    title_column.title("Compare Models")
+if page == "Compare":
+    title_column.title("Compare")
     st.caption("Each selected model is independently backtested, then restarted over the exact shared completed holding periods. Comparison settings below are independent of the Backtest page. This is informational only and does not recommend one model.")
     default_comparison = [model_name, next(name for name in MODEL_OPTIONS if name != model_name)]
     selected_models = st.multiselect("Models", tuple(MODEL_OPTIONS), default=default_comparison, key="compare_models")
@@ -478,7 +512,8 @@ if page == "Compare Models":
                 st.download_button(f"Download {name} common-period audit CSV", backtest.audit.to_csv().encode("utf-8"), f"{name.lower().replace(' ', '_').replace('(', '').replace(')', '')}_comparison_audit.csv", "text/csv", key=f"comparison_audit_{name}")
 
 if page == "Signals":
-    signal_model_name = st.session_state["signals_model_name"]
+    signal_model_name = model_selector("signals", "Choose signal model")
+    st.session_state["signals_model_name"] = signal_model_name
     signal_strategy = MODEL_OPTIONS[signal_model_name]()
     signal_data_assets = getattr(signal_strategy, "data_assets", ASSETS)
     signal_momentum_assets = getattr(signal_strategy, "signal_assets", signal_data_assets)
@@ -606,9 +641,7 @@ if page == "Signals":
 if page == "Rules":
     title_column.title("Rules")
     st.subheader("Model rules")
-    for rule_name, rule in MODEL_RULES.items():
-        with st.expander(rule_name, expanded=rule_name == model_name):
-            st.markdown(rule)
+    st.markdown(MODEL_RULES[model_name])
 
     st.markdown("""**13612U:** `(1-month return + 3-month return + 6-month return + 12-month return) / 4`. Each return is `price at signal date / price at its historical month-end - 1`. This implementation therefore requires 12 earlier observations of each asset it actually needs and uses no later prices.
 
