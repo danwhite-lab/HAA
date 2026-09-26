@@ -17,7 +17,7 @@ from haa.metrics import annual_returns, performance_metrics
 from haa.model_catalog import MODEL_CATALOG, definition_for_label, implementations, resolve, strategies as catalog_strategies, variants
 from haa.portfolio import aggregate_holdings, total_weight
 from haa.signals import first_trading_day_after, latest_actionable_signal
-from haa.strategies import HAA4, HAA4Leveraged2x, HAAClassicLeveragedNoQQQ, HAAClassicNoQQQ, HAASimple, HAASimpleIsrael, HAASimpleLeveraged2x, InflationCompassSteady
+from haa.strategies import HAA4, HAA4Leveraged2x, HAAClassicLeveragedNoQQQ, HAAClassicNoQQQ, HAASimple, HAASimpleIsrael, HAASimpleLeveraged2x, InflationCompassFast, InflationCompassStandard, InflationCompassSteady
 from haa.tase_data import TASE_ISRAEL_ASSET_IDS, TaseDataError, download_tase_israel_prices
 
 MODEL_OPTIONS = {item.label: item.model_class for item in MODEL_CATALOG}
@@ -30,6 +30,12 @@ MODEL_RULES = {
     "Inflation Compass Steady (80-day)": """**Inflation Compass Steady (80-day):** On the final NYSE trading day of each month, growth is on when SPY is above its 200-day SMA. Inflation is on when the prior trading day's T5YIE is above 2% and either exceeds its value 80 valid trading observations earlier or the 80-day linear-regression slope of the published inflation-sector indicator is positive. The indicator compounds daily rebalanced positive-basket returns (50% XLE; one-sixth each XLI/XLF/XLB) divided by daily rebalanced negative-basket returns (one-third each XLU/XLV/XLP). Holdings are XLE, XLK, XLU, or 50/50 XLP/IEF by the resulting regime. No CPI fallback is used, so the model begins in 2003.
 
 **Risk:** concentrated sector allocation. T5YIE is market-implied and may be distorted in stressed markets; signals are informational only.""",
+    "Inflation Compass Standard": """**Inflation Compass Standard:** The published 60-trading-day version of Inflation Compass. On the final NYSE trading day of each month, growth is on when SPY is above its 200-day SMA. Inflation is on when the prior trading day's T5YIE is above 2% and either exceeds its value 60 valid trading observations earlier or the 60-day linear-regression slope of the published inflation-sector indicator is positive. The indicator compounds daily rebalanced positive-basket returns (50% XLE; one-sixth each XLI/XLF/XLB) divided by daily rebalanced negative-basket returns (one-third each XLU/XLV/XLP). Holdings are XLE, XLK, XLU, or 50/50 XLP/IEF by the resulting regime. No CPI fallback is used, so the model begins in 2003.
+
+**Risk:** concentrated sector allocation. T5YIE is market-implied and may be distorted in stressed markets; signals are informational only.""",
+    "Inflation Compass Fast (40-day)": """**Inflation Compass Fast (40-day):** A faster 40-trading-day version of Inflation Compass. On the final NYSE trading day of each month, growth is on when SPY is above its 200-day SMA. Inflation is on when the prior trading day's T5YIE is above 2% and either exceeds its value 40 valid trading observations earlier or the 40-day linear-regression slope of the published inflation-sector indicator is positive. The indicator compounds daily rebalanced positive-basket returns (50% XLE; one-sixth each XLI/XLF/XLB) divided by daily rebalanced negative-basket returns (one-third each XLU/XLV/XLP). Holdings are XLE, XLK, XLU, or 50/50 XLP/IEF by the resulting regime. No CPI fallback is used, so the model begins in 2003.
+
+**Risk:** shorter confirmation windows can enter and exit inflationary regimes earlier, but can also increase whipsaw and trading activity.""",
     "HAA-Simple Leveraged 2x (SSO)": """**HAA-Simple Leveraged 2x (SSO):** Calculate equal-weighted 13612U using unleveraged SPY and TIP. If both are strictly positive, hold 100% SSO. Otherwise, compare IEF and BIL momentum and hold the higher-momentum defensive asset. SSO momentum never controls the gate; IEF and BIL remain unleveraged.
 
 **Risk:** high-drawdown satellite, not a core holding. A monthly signal cannot prevent losses from a fast intramonth crash.""",
@@ -660,7 +666,7 @@ if page == "Signals":
             else:
                 holdings = signal["mapped_holding_assets"] if isinstance(signal_strategy, HAA4Leveraged2x) else signal["selected_offensive_assets"]
                 st.write(f"TIP 13612U momentum is positive and both selected offensive assets are positive, so the model holds {holdings} at 50% each.")
-        elif isinstance(signal_strategy, InflationCompassSteady):
+        elif isinstance(signal_strategy, (InflationCompassFast, InflationCompassStandard, InflationCompassSteady)):
             st.write(f"Growth is {'up' if signal['growth_up'] else 'down'} and inflation is {'on' if signal['inflation_on'] else 'off'}, producing the {signal['regime'].replace('-', ' ')} allocation.")
         elif isinstance(signal_strategy, (HAAClassicNoQQQ, HAAClassicLeveragedNoQQQ)) and signal["regime"] == "risk-on":
             if isinstance(signal_strategy, HAAClassicLeveragedNoQQQ):
@@ -681,23 +687,24 @@ if page == "Signals":
             st.write(f"SPY and TIP 13612U momentum are both strictly positive, so the model selects {holding}.")
         else:
             st.write(f"At least one of SPY or TIP 13612U momentum is not positive, so the model selects the higher-momentum defensive asset: {signal['selected_asset']}.")
-        if isinstance(signal_strategy, InflationCompassSteady):
+        if isinstance(signal_strategy, (InflationCompassFast, InflationCompassStandard, InflationCompassSteady)):
+            window = signal_strategy.momentum_window
             compass_inputs = pd.DataFrame([{
                 "SPY close": signal["SPY_price"],
                 "SPY 200-day SMA": signal["SPY_200d_sma"],
                 "Growth up": signal["growth_up"],
                 "T5YIE date (lagged)": signal["t5yie_lag_date"],
                 "T5YIE (lagged)": signal["t5yie_lagged"],
-                "T5YIE 80-day date": signal["t5yie_80d_date"],
-                "T5YIE 80-day value": signal["t5yie_80d"],
+                f"T5YIE {window}-day date": signal["t5yie_momentum_date"],
+                f"T5YIE {window}-day value": signal["t5yie_momentum_value"],
                 "Breakeven momentum": signal["breakeven_momentum"],
                 "Inflation indicator": signal["inflation_indicator"],
-                "80-day indicator slope": signal["indicator_80d_slope"],
+                f"{window}-day indicator slope": signal["indicator_momentum_slope"],
                 "Asset momentum": signal["asset_momentum"],
                 "Inflation on": signal["inflation_on"],
             }])
-            st.dataframe(compass_inputs.style.format({"SPY close": "{:.4f}", "SPY 200-day SMA": "{:.4f}", "T5YIE (lagged)": "{:.4f}", "T5YIE 80-day value": "{:.4f}", "Inflation indicator": "{:.6f}", "80-day indicator slope": "{:.8f}"}), use_container_width=True, hide_index=True)
-            st.caption("T5YIE is read from the prior available trading-day observation. Both confirmation windows use 80 valid trading observations.")
+            st.dataframe(compass_inputs.style.format({"SPY close": "{:.4f}", "SPY 200-day SMA": "{:.4f}", "T5YIE (lagged)": "{:.4f}", f"T5YIE {window}-day value": "{:.4f}", "Inflation indicator": "{:.6f}", f"{window}-day indicator slope": "{:.8f}"}), use_container_width=True, hide_index=True)
+            st.caption(f"T5YIE is read from the prior available trading-day observation. Both confirmation windows use {window} valid trading observations.")
         else:
             price_columns = [f"{asset}_price" for asset in signal_momentum_assets if f"{asset}_price" in signal.index]
             momentum_columns = [f"{asset}_13612u" for asset in signal_momentum_assets if f"{asset}_13612u" in signal.index]
@@ -727,7 +734,7 @@ if page == "Signals":
         st.caption("This signal uses completed month-end data only. Backtest settings do not affect it.")
         if isinstance(signal_strategy, HAASimpleIsrael) and tase_warning:
             st.warning(f"Public TASE/Maya retrieval issue: {tase_warning}")
-        if isinstance(signal_strategy, InflationCompassSteady) and fred_warning:
+        if isinstance(signal_strategy, (InflationCompassFast, InflationCompassStandard, InflationCompassSteady)) and fred_warning:
             st.warning(f"FRED retrieval issue: {fred_warning}")
         st.dataframe(source_metadata.loc[list(signal_data_assets)], use_container_width=True)
         raw_ranges = date_ranges(signal_prices)
@@ -749,7 +756,7 @@ if page == "Rules":
     st.subheader("Data sources and coverage")
     if isinstance(strategy, HAASimpleIsrael) and tase_warning:
         st.warning(f"Public TASE/Maya retrieval issue: {tase_warning}")
-    if isinstance(strategy, InflationCompassSteady) and fred_warning:
+    if isinstance(strategy, (InflationCompassFast, InflationCompassStandard, InflationCompassSteady)) and fred_warning:
         st.warning(f"FRED retrieval issue: {fred_warning}")
     st.dataframe(source_metadata.loc[list(data_assets)].join(date_ranges(prices)), use_container_width=True)
     missing = monthly[monthly.isna().any(axis=1)]
@@ -762,8 +769,8 @@ if page == "Rules":
             audit_columns += ["defensive_winner", "selected_offensive_assets", "replaced_offensive_assets"]
         if isinstance(strategy, HAA4Leveraged2x):
             audit_columns += ["selected_underlying_assets", "mapped_holding_assets"]
-    if isinstance(strategy, InflationCompassSteady):
-        audit_columns += ["SPY_200d_sma", "t5yie_lag_date", "t5yie_lagged", "t5yie_80d_date", "t5yie_80d", "positive_basket_growth", "negative_basket_growth", "inflation_indicator", "indicator_80d_slope", "growth_up", "inflation_level", "breakeven_momentum", "asset_momentum", "inflation_on", "target_weights", "previous_weights"]
+    if isinstance(strategy, (InflationCompassFast, InflationCompassStandard, InflationCompassSteady)):
+        audit_columns += ["SPY_200d_sma", "t5yie_lag_date", "t5yie_lagged", "t5yie_momentum_date", "t5yie_momentum_value", "positive_basket_growth", "negative_basket_growth", "inflation_indicator", "indicator_momentum_slope", "growth_up", "inflation_level", "breakeven_momentum", "asset_momentum", "inflation_on", "target_weights", "previous_weights"]
         if isinstance(strategy, HAAClassicLeveragedNoQQQ):
             audit_columns += ["selected_underlying_assets", "mapped_holding_assets"]
     audit_columns += ["regime", "selected_asset", "previous_asset", "trade", "execution_date", "holding_end", "holding_period_return"]
